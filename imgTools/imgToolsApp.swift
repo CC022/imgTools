@@ -217,9 +217,9 @@ struct ContentView: View {
                 return [outputURL]
                 
             case .heif:
+                let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
                 let outputURL = folder.appendingPathComponent(url.deletingPathExtension().lastPathComponent).appendingPathExtension("heif")
-                let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-                try context.writeHEIFRepresentation(of: ciImage, to: outputURL, format: .RGBA8, colorSpace: colorSpace)
+                try context.writeHEIF10Representation(of: ciImage, to: outputURL, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.95])
                 return [outputURL]
                 
             case .slicer:
