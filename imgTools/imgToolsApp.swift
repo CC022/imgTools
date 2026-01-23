@@ -41,18 +41,14 @@ struct ContentView: View {
     @State private var outputFolder: URL?
     
     var body: some View {
-        VStack(spacing: 20) {
-            Text("Image Tools")
-                .font(.title)
-                .padding(.top)
-            
-            Picker("Operation:", selection: $selectedOperation) {
+        VStack() {
+            Picker("", selection: $selectedOperation) {
                 ForEach(ImageOperation.allCases, id: \.self) { operation in
                     Text(operation.rawValue).tag(operation)
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal)
+            .padding()
             .disabled(isProcessing)
             
             if images.isEmpty {
