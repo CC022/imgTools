@@ -16,8 +16,7 @@ struct ImageToolsApp: App {
 enum ImageOperation: String, CaseIterable {
     case exr = "Convert to EXR"
     case heif = "Convert to HEIF"
-    case slicer = "Slice into 3 Parts"
-    case fitCenter = "Fit & Center"
+    case slicer = "Slicer"
     case video = "Images to Video"
 }
 
@@ -255,9 +254,6 @@ struct ContentView: View {
             case .slicer:
                 return try await sliceImage(ciImage: ciImage, sourceURL: url, outputFolder: folder, context: context)
                 
-            case .fitCenter:
-                return try await fitAndCenterImage(ciImage: ciImage, sourceURL: url, outputFolder: folder, context: context)
-                
             case .video:
                 // Video is handled separately
                 return []
@@ -350,68 +346,27 @@ struct ContentView: View {
         }.value
     }
     
-    func sliceImage(ciImage: CIImage, sourceURL: URL, outputFolder: URL, context: CIContext) throws -> [URL] {
+    func sliceImage(ciImage: CIImage, sourceURL: URL, outputFolder: URL, context: CIContext) async throws -> [URL] {
         let width = Int(ciImage.extent.width)
         let height = Int(ciImage.extent.height)
         let sliceWidth = width / 3
-        
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-        let ext = sourceURL.pathExtension
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         
-        guard let imageType = UTType(filenameExtension: ext) else {
-            throw ImageToolsError.unsupportedFormat
-        }
-        
         var outputURLs: [URL] = []
+        let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
         
         for i in 0..<3 {
             let x = i * sliceWidth
             let w = (i == 2) ? (width - x) : sliceWidth
-            
-            let cropped = ciImage.cropped(
-                to: CGRect(x: x, y: 0, width: w, height: height)
-            )
-            
-            guard let outCG = context.createCGImage(
-                cropped,
-                from: cropped.extent,
-                format: .RGBA8,
-                colorSpace: colorSpace
-            ) else { continue }
-            
-            let outURL = outputFolder.appendingPathComponent("\(baseName)_slice\(i+1).\(ext)")
-            guard let dest = CGImageDestinationCreateWithURL(outURL as CFURL, imageType.identifier as CFString, 1, nil) else { continue }
-            
-            CGImageDestinationAddImage(dest, outCG, nil)
-            CGImageDestinationFinalize(dest)
-            
-            outputURLs.append(outURL)
+            let cropped = ciImage.cropped(to: CGRect(x: x, y: 0, width: w, height: height))
+            let outputURL = outputFolder.appendingPathComponent("\(baseName)_slice\(i+1).heif")
+            try context.writeHEIF10Representation(of: cropped, to: outputURL, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.95])
+            outputURLs.append(outputURL)
         }
-        
-        if outputURLs.isEmpty {
-            throw ImageToolsError.slicingFailed
-        }
-        
-        return outputURLs
-    }
-    
-    func fitAndCenterImage(ciImage: CIImage, sourceURL: URL, outputFolder: URL, context: CIContext) throws -> [URL] {
-        let width = Int(ciImage.extent.width)
-        let height = Int(ciImage.extent.height)
-        let sliceWidth = width / 3
         
         let targetSize = CGSize(width: sliceWidth, height: height)
-        
-        let scale = min(
-            targetSize.width / CGFloat(width),
-            targetSize.height / CGFloat(height)
-        )
-        
-        let scaledSize = CGSize(
-            width: CGFloat(width) * scale,
-            height: CGFloat(height) * scale
-        )
+        let scale = min(targetSize.width / CGFloat(width),targetSize.height / CGFloat(height))
+        let scaledSize = CGSize(width: CGFloat(width) * scale, height: CGFloat(height) * scale)
         
         let xOffset = (targetSize.width - scaledSize.width) / 2
         let yOffset = (targetSize.height - scaledSize.height) / 2
@@ -424,34 +379,18 @@ struct ContentView: View {
             .cropped(to: CGRect(origin: .zero, size: targetSize))
         
         let composed = scaledImage.composited(over: whiteBG)
-        
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-        let ext = sourceURL.pathExtension
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
-        
-        guard let imageType = UTType(filenameExtension: ext) else {
-            throw ImageToolsError.unsupportedFormat
+        let outURL = outputFolder.appendingPathComponent("\(baseName)_centered.heif")
+
+        try context.writeHEIF10Representation(of: composed, to: outURL, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.95])
+        outputURLs.append(outURL)
+
+        if outputURLs.isEmpty {
+            throw ImageToolsError.slicingFailed
         }
         
-        guard let outCG = context.createCGImage(
-            composed,
-            from: CGRect(origin: .zero, size: targetSize),
-            format: .RGBA8,
-            colorSpace: colorSpace
-        ) else {
-            throw ImageToolsError.processingFailed
-        }
-        
-        let outURL = outputFolder.appendingPathComponent("\(baseName)_centered.\(ext)")
-        guard let dest = CGImageDestinationCreateWithURL(outURL as CFURL, imageType.identifier as CFString, 1, nil) else {
-            throw ImageToolsError.processingFailed
-        }
-        
-        CGImageDestinationAddImage(dest, outCG, nil)
-        CGImageDestinationFinalize(dest)
-        
-        return [outURL]
+        return outputURLs
     }
+    
 }
 
 struct ImageRow: View {
