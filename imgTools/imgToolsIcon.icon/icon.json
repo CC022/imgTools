@@ -6,7 +6,7 @@
     {
       "layers" : [
         {
-          "glass" : false,
+          "glass" : true,
           "image-name" : "photo.stack.fill.svg",
           "name" : "photo.stack.fill",
           "position" : {
