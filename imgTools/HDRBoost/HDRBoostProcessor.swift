@@ -48,7 +48,7 @@ nonisolated func performHDRBoost(inputURL: URL, maskURL: URL, boost: Double, out
         let outputURL = folder
             .appendingPathComponent("\(inputURL.deletingPathExtension().lastPathComponent)_hdrBoost")
             .appendingPathExtension("heif")
-        let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+        let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
         try context.writeHEIF10Representation(
             of: blended,
             to: outputURL,
@@ -61,7 +61,7 @@ nonisolated func performHDRBoost(inputURL: URL, maskURL: URL, boost: Double, out
 
 nonisolated func makeHDRPreview(inputURL: URL, maskURL: URL, boost: Double) async throws -> CGImage {
     try await Task.detached {
-        let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+        let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
         let context = CIContext(options: [
             .workingColorSpace: colorSpace,
             .outputColorSpace: colorSpace

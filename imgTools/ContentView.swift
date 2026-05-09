@@ -11,10 +11,8 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } detail: {
             switch selection {
-            case .exr:
-                ConvertEXRView()
-            case .heif:
-                ConvertHEIFView()
+            case .convert:
+                ConvertImagesView()
             case .hdrBoost:
                 HDRBoostView()
             case .slicer:

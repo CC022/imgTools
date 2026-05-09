@@ -6,7 +6,7 @@ nonisolated func sliceImage(ciImage: CIImage, sourceURL: URL, outputFolder: URL,
     let sliceWidth = width / 3
     let baseName = sourceURL.deletingPathExtension().lastPathComponent
     var outputURLs: [URL] = []
-    let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+    let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
 
     for i in 0..<3 {
         let x = i * sliceWidth

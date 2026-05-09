@@ -1,8 +1,7 @@
 import Foundation
 
 enum ImageOperation: String, CaseIterable {
-    case exr = "Convert to EXR"
-    case heif = "Convert to HEIF"
+    case convert = "Convert Images"
     case hdrBoost = "HDR Boost"
     case slicer = "Slicer"
     case video = "Images to Video"
@@ -10,8 +9,7 @@ enum ImageOperation: String, CaseIterable {
 
     var systemImage: String {
         switch self {
-        case .exr:      return "doc.badge.arrow.up"
-        case .heif:     return "photo"
+        case .convert:   return "arrow.triangle.2.circlepath"
         case .hdrBoost: return "sparkles"
         case .slicer:   return "scissors"
         case .video:       return "film"
