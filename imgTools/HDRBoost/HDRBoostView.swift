@@ -93,13 +93,10 @@ struct HDRBoostView: View {
             }
         }
         .padding()
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                Task {
-                    guard let url = try? await provider.loadFileURL() else { return }
-                    if hdrInputURL == nil { hdrInputURL = url } else { hdrMaskURL = url }
-                    hdrStatus = .pending
-                }
+        .dropDestination(for: URL.self) { items, _ in
+            for url in items {
+                if hdrInputURL == nil { hdrInputURL = url } else { hdrMaskURL = url }
+                hdrStatus = .pending
             }
             return true
         }

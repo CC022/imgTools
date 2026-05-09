@@ -19,12 +19,9 @@ struct ImageBatchProcessView: View {
                 imageList
             }
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                Task {
-                    guard let url = try? await provider.loadFileURL() else { return }
-                    images.append(ImageItem(url: url))
-                }
+        .dropDestination(for: URL.self) { items, _ in
+            for url in items {
+                images.append(ImageItem(url: url))
             }
             return true
         }
