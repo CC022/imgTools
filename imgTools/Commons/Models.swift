@@ -1,0 +1,68 @@
+import Foundation
+
+enum ImageOperation: String, CaseIterable {
+    case exr = "Convert to EXR"
+    case heif = "Convert to HEIF"
+    case hdrBoost = "HDR Boost"
+    case slicer = "Slicer"
+    case video = "Images to Video"
+
+    var systemImage: String {
+        switch self {
+        case .exr:      return "doc.badge.arrow.up"
+        case .heif:     return "photo"
+        case .hdrBoost: return "sparkles"
+        case .slicer:   return "scissors"
+        case .video:    return "film"
+        }
+    }
+}
+
+struct ImageItem: Identifiable {
+    let id = UUID()
+    let url: URL
+    var status: ProcessingStatus = .pending
+}
+
+enum ProcessingStatus {
+    case pending
+    case processing
+    case success([URL])
+    case failed(String)
+}
+
+enum ActiveImporter: Hashable {
+    case images
+    case hdrInput
+    case hdrMask
+    case outputFolder
+}
+
+enum PendingOutputAction {
+    case processAll
+    case hdrBoost(inputURL: URL, maskURL: URL)
+}
+
+enum ImageToolsError: LocalizedError {
+    case invalidImage
+    case invalidMaskImage
+    case unsupportedFormat
+    case slicingFailed
+    case processingFailed
+    case noImages
+    case videoCreationFailed
+    case previewFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidImage:       return "Unable to load image"
+        case .invalidMaskImage:   return "Unable to load mask image"
+        case .unsupportedFormat:  return "Unsupported image format"
+        case .slicingFailed:      return "Failed to create sliced images"
+        case .processingFailed:   return "Failed to process image"
+        case .noImages:           return "No images to process"
+        case .videoCreationFailed: return "Failed to create video"
+        case .previewFailed:      return "Failed to render preview"
+        }
+    }
+}
