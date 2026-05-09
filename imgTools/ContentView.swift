@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var selection: ImageOperation? = .heif
+    @State private var selection: ImageOperation? = .panoStitch
 
     var body: some View {
         NavigationSplitView {
@@ -21,6 +21,8 @@ struct ContentView: View {
                 SlicerView()
             case .video:
                 ImagesToVideoView()
+            case .panoStitch:
+                PanoStitcherView()
             case nil:
                 Text("Select a tool from the sidebar")
                     .foregroundColor(.secondary)

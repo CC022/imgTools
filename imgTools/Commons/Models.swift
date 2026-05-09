@@ -6,6 +6,7 @@ enum ImageOperation: String, CaseIterable {
     case hdrBoost = "HDR Boost"
     case slicer = "Slicer"
     case video = "Images to Video"
+    case panoStitch = "Pano Stitcher"
 
     var systemImage: String {
         switch self {
@@ -13,7 +14,8 @@ enum ImageOperation: String, CaseIterable {
         case .heif:     return "photo"
         case .hdrBoost: return "sparkles"
         case .slicer:   return "scissors"
-        case .video:    return "film"
+        case .video:       return "film"
+        case .panoStitch:  return "pano"
         }
     }
 }
