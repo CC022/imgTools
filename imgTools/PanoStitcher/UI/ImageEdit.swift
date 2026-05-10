@@ -249,7 +249,6 @@ struct EditPanel: View {
 
             Divider()
 
-            ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     slidersSection
                     Divider()
@@ -259,7 +258,6 @@ struct EditPanel: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
-            }
         }
         .frame(width: 320)
         .glassEffect(in: .rect(cornerRadius: 10))

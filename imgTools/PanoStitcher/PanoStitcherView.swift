@@ -193,6 +193,8 @@ struct PanoStitcherView: View {
             }
             .backgroundExtensionEffect()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+//            .ignoresSafeArea(edges: .top)
+            .ignoresSafeArea(edges: .all)
             .overlay {
                 VStack {
                     Spacer()
@@ -320,6 +322,7 @@ struct PanoStitcherView: View {
                 .help("Save")
             }
         }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .task {
             commitFocal()
             if let urls = store.importedURLs {

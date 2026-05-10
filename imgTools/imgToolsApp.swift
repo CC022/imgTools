@@ -6,5 +6,6 @@ struct ImageToolsApp: App {
         WindowGroup {
             ContentView()
         }
+        .windowStyle(.hiddenTitleBar)
     }
 }

@@ -83,7 +83,7 @@ final class HDRMetalImageView: MTKView {
 
     var onTransformChange: ((MetalCanvasTransform) -> Void)?
 
-    private let scaleRange: ClosedRange<CGFloat> = 1...20
+    private let scaleRange: ClosedRange<CGFloat> = 0.8...20
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
