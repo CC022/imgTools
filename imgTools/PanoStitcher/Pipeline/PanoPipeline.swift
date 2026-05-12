@@ -571,7 +571,7 @@ enum PanoPipeline {
                      crop: CGRect? = nil,
                      exifSource: URL? = nil,
                      writeGPano: Bool = true,
-                     quality: Double = 0.92) throws {
+                     quality: Double = 0.95) throws {
         let edited = ImageEditor.apply(edits, to: buffer, storage: .shared)
                   ?? buffer
         let final: CanvasBuffer = {
@@ -601,7 +601,7 @@ enum PanoPipeline {
                      to url: URL,
                      edits: EditParams = .identity,
                      crop: CGRect? = nil,
-                     quality: Double = 0.92) throws {
+                     quality: Double = 0.95) throws {
         try save(buffer: result.blendedBuffer, to: url,
                   edits: edits, crop: crop,
                   exifSource: result.graph.nodes.first?.image.sourceURL,
