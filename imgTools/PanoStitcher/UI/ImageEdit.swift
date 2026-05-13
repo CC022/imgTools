@@ -170,7 +170,7 @@ enum ImageEditor {
                 Compute.encode(cb, pso,
                     buffers: [src.buffer, dst.buffer],
                     dims:    [src.dimsPacked],
-                    bytes:   [(raw.baseAddress!, raw.count)],
+                    bytes:   [(raw.baseAddress!, MemoryLayout<EditParams>.stride)],
                     gridW:   src.width,
                     gridH:   src.height)
             }
