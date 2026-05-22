@@ -21,6 +21,8 @@ struct ContentView: View {
                 ImagesToVideoView()
             case .panoStitch:
                 PanoStitcherView()
+            case .hdmiCapture:
+                HDMICaptureView()
             case nil:
                 Text("Select a tool from the sidebar")
                     .foregroundColor(.secondary)

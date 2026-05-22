@@ -6,14 +6,16 @@ enum ImageOperation: String, CaseIterable {
     case slicer = "Slicer"
     case video = "Images to Video"
     case panoStitch = "Pano Stitcher"
+    case hdmiCapture = "HDMI Capture"
 
     var systemImage: String {
         switch self {
-        case .convert:   return "arrow.triangle.2.circlepath"
-        case .hdrBoost: return "sparkles"
-        case .slicer:   return "scissors"
+        case .convert:     return "arrow.triangle.2.circlepath"
+        case .hdrBoost:    return "sparkles"
+        case .slicer:      return "scissors"
         case .video:       return "film"
         case .panoStitch:  return "pano"
+        case .hdmiCapture: return "tv"
         }
     }
 }
