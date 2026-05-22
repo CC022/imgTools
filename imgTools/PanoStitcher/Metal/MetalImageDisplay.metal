@@ -121,9 +121,13 @@ inline float3 applySelectiveColor(float3 rgb, SelectiveColorParams sc) {
     float s = hsv.y;
     if (s < 1e-4f) return rgb;              // pure gray → no hue to bias
 
-    // Half-width of each band in degrees. Range slider scales it; default
-    // (1.0) gives a 30° half-width so adjacent bands overlap smoothly.
-    float bandwidth = max(5.0f, 30.0f * sc.range);
+    // Band σ in degrees. Range slider scales it; default (1.0) gives
+    // σ = 30°. Gaussian rolloff means adjacent bands — sitting 30°–60°
+    // apart on a non-uniform circle — overlap smoothly at their
+    // midpoints instead of both dropping to zero (which a smoothstep
+    // with the same half-width does, leaving "dead-zone" hues that no
+    // band can touch).
+    float sigma = max(5.0f, 30.0f * sc.range);
 
     float3 picks[8] = {
         sc.red, sc.orange, sc.yellow, sc.green,
@@ -136,11 +140,14 @@ inline float3 applySelectiveColor(float3 rgb, SelectiveColorParams sc) {
 
     for (int i = 0; i < 8; ++i) {
         float diff = fabs(hueDelta(h, kSelHueCenters[i]));
-        if (diff >= bandwidth) continue;
-        // Smooth roll-off: 1 at the center, 0 at the band edge. Weighted
-        // by current saturation so desaturated near-grays barely move.
-        float w = 1.0f - smoothstep(0.0f, bandwidth, diff);
-        w *= s;
+        // Truncate at 3σ — beyond that the Gaussian weight is < 0.0001
+        // and not worth the multiply.
+        if (diff >= sigma * 3.0f) continue;
+        // Gaussian roll-off: 1 at the center, ≈0.37 at one σ, smoothly
+        // tapering past the band. Weighted by current saturation so
+        // desaturated near-grays barely move.
+        float t = diff / sigma;
+        float w = exp(-t * t) * s;
         dh += w * picks[i].x * 30.0f;     // up to ±30° hue shift
         ds += w * picks[i].y;             // ±1 → up to ±100% sat
         dl += w * picks[i].z;             // ±1 → up to ±1 stop
@@ -160,9 +167,19 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
     // 1. Exposure — clean multiplicative gain in stops. Linear-domain natural fit.
     rgb *= exp2(p.exposure);
 
+    // 2. Temperature — R/B per-channel gain (warm/cool). White balance is the
+    //    raw-→-display interpretation step and conventionally runs *before*
+    //    tone and saturation, so all downstream luma/chroma math sees the
+    //    corrected colour.
+    rgb.r *= 1.0f + p.temperature * 0.5f;
+    rgb.b *= 1.0f - p.temperature * 0.5f;
+
+    // 3. Tint — green/magenta axis on G.
+    rgb.g *= 1.0f - p.tint * 0.2f;
+
     float luma = dot(rgb, kLumaWeights);
 
-    // 2. Highlights — log-space gain weighted by bright luminance.
+    // 4. Highlights — log-space gain weighted by bright luminance.
     //    Luminance-preserving: scale RGB by the same factor → no hue shift.
     //    Direction matches Lightroom: + brightens highlights, − recovers them.
     if (p.highlights != 0.0f) {
@@ -172,7 +189,7 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         luma *= g;
     }
 
-    // 3. Shadows — symmetric on the dark end.
+    // 5. Shadows — symmetric on the dark end.
     if (p.shadows != 0.0f) {
         float w = 1.0f - smoothstep(0.0f, 0.4f, luma);
         float g = exp2(p.shadows * w * 1.5f);
@@ -180,14 +197,16 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         luma *= g;
     }
 
-    // 4. Black point — small additive shift on the dark anchor.
-    //    + crushes blacks, − lifts them.
+    // 6. Black point — small additive shift on the dark anchor.
+    //    + crushes blacks, − lifts them. Clamped to ≥ 0 immediately so the
+    //    HSV-based steps below (selective colour) and the chroma ratio in
+    //    vibrance never see a negative max-channel.
     if (p.blackPoint != 0.0f) {
-        rgb -= p.blackPoint * 0.05f;
+        rgb  = max(rgb - p.blackPoint * 0.05f, 0.0f);
         luma = dot(rgb, kLumaWeights);
     }
 
-    // 5. Brightness — midtone-targeted exp2 gain. Effect peaks at L ≈ 0.5
+    // 7. Brightness — midtone-targeted exp2 gain. Effect peaks at L ≈ 0.5
     //    (perceptual mid in displayable range), tapers to identity at L=0
     //    and L=1+, so HDR highlights are untouched. This is the "Brightness"
     //    behaviour Photoshop / Lightroom users expect: midtones move, the
@@ -200,7 +219,7 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         luma *= g;
     }
 
-    // 6. Contrast — sine-based parametric S-curve. Anchored at 0, 0.5, 1
+    // 8. Contrast — sine-based parametric S-curve. Anchored at 0, 0.5, 1
     //    so blacks-stay-black and whites-stay-white at any amount; provably
     //    monotonic for |amount| ≤ 1 (with A = 0.15, min derivative is
     //    1 − 2π·A ≈ 0.058 > 0). Avoids the dead-black clipping a linear
@@ -219,14 +238,14 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         }
     }
 
-    // 7. Saturation — chroma scale around grayscale.
+    // 9. Saturation — chroma scale around grayscale.
     {
         rgb  = mix(float3(luma), rgb, 1.0f + p.saturation);
         luma = dot(rgb, kLumaWeights);
     }
 
-    // 8. Vibrance — saturation weighted by `1 − chroma`. Already-saturated
-    //    pixels (sky, skin) move less than dull ones.
+    // 10. Vibrance — saturation weighted by `1 − chroma`. Already-saturated
+    //     pixels (sky, skin) move less than dull ones.
     if (p.vibrance != 0.0f) {
         float maxC   = max(max(rgb.r, rgb.g), rgb.b);
         float minC   = min(min(rgb.r, rgb.g), rgb.b);
@@ -235,13 +254,6 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         rgb = mix(float3(luma), rgb, 1.0f + boost);
     }
 
-    // 9. Temperature — R/B per-channel gain (warm/cool).
-    rgb.r *= 1.0f + p.temperature * 0.5f;
-    rgb.b *= 1.0f - p.temperature * 0.5f;
-
-    // 10. Tint — green/magenta axis on G.
-    rgb.g *= 1.0f - p.tint * 0.2f;
-
     // 11. Three-zone colour balance.
     //     Each tint is an RGB push (already scaled in Swift from the
     //     wheel position). We weight by region: shadows for low luma,
@@ -249,6 +261,10 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
     //     sum to 1 over the displayable [0, 1] range so a uniform tint
     //     across all three wheels behaves like a flat colour push,
     //     while individual wheels affect only their region.
+    //
+    //     Clamp ≥ 0 after the additive push so a negative-tinted wheel
+    //     on already-dark pixels doesn't propagate negative RGB into the
+    //     HSV math in step 12.
     {
         float Lc = clamp(luma, 0.0f, 1.0f);
         float wS = 1.0f - smoothstep(0.0f, 0.5f, Lc);  // 1 at black, 0 above mid
@@ -257,6 +273,7 @@ inline float3 applyEdits(float3 rgb, EditParams p) {
         rgb += p.shadowsTint    * wS;
         rgb += p.midtonesTint   * wM;
         rgb += p.highlightsTint * wH;
+        rgb  = max(rgb, 0.0f);
     }
 
     // 12. Selective Color — per-hue HSL bias. Runs last so the hue bands
@@ -346,6 +363,11 @@ kernel void applyEditsKernel(
     half4 c = src[i];
     if (c.a < 0.5h) { dst[i] = c; return; }   // pass through panorama void
 
-    float3 edited = applyEdits(float3(c.rgb), p);
+    // Clamp negatives on the export path so HLG/PQ encoders — whose
+    // transfer curves are undefined for x < 0 — never see sub-black
+    // values from blackPoint or color-balance subtraction. The display
+    // path leaves negatives intact because the linear extendedLinearSRGB
+    // color space handles them gracefully.
+    float3 edited = max(applyEdits(float3(c.rgb), p), 0.0f);
     dst[i] = half4(half3(edited), c.a);
 }
