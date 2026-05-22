@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct ImageToolsApp: App {
+    @State private var selection: ImageOperation? = .panoStitch
     @State private var hdmiSession = HDMICaptureSession()
     @State private var fullscreenLayer: AVCaptureVideoPreviewLayer?
 
@@ -13,7 +14,7 @@ struct ImageToolsApp: App {
                     fullscreenLayer = nil
                 }
             } else {
-                ContentView()
+                ContentView(selection: $selection)
                     .environment(hdmiSession)
                     .environment(\.presentFullscreenPreview) { layer in
                         fullscreenLayer = layer

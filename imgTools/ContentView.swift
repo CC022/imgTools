@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var selection: ImageOperation? = .panoStitch
+    @Binding var selection: ImageOperation?
 
     var body: some View {
         NavigationSplitView {
