@@ -24,6 +24,7 @@ import Metal
 import SwiftUI
 import Foundation
 import simd
+import UniformTypeIdentifiers
 
 // MARK: - EditParams (memory layout matches the Metal `EditParams` struct)
 //
@@ -32,7 +33,7 @@ import simd
 // 16-byte aligned, matching what the Metal compiler does for the
 // trailing `float3` fields. Total stride: 96 bytes both sides.
 
-struct EditParams: Equatable, Sendable {
+struct EditParams: Equatable, Sendable, Codable {
     var exposure:    Float = 0   // stops
     var highlights:  Float = 0
     var shadows:     Float = 0
@@ -60,6 +61,37 @@ struct EditParams: Equatable, Sendable {
     var isIdentity: Bool { self == .identity }
 }
 
+// MARK: - Preset (JSON) encoding
+
+extension EditParams {
+    fileprivate func encodedJSON() throws -> Data {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try enc.encode(self)
+    }
+
+    fileprivate static func decodedJSON(_ data: Data) throws -> EditParams {
+        try JSONDecoder().decode(EditParams.self, from: data)
+    }
+}
+
+/// SwiftUI document wrapper used by `.fileExporter` / `.fileImporter` to
+/// round-trip an `EditParams` value to a JSON file on disk.
+struct EditParamsDocument: FileDocument {
+    static let readableContentTypes: [UTType] = [.json]
+    var params: EditParams
+    init(_ params: EditParams = .identity) { self.params = params }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        params = try EditParams.decodedJSON(data)
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: try params.encodedJSON())
+    }
+}
+
 // MARK: - SelectiveColorParams
 //
 // Eight hue bands centered at the standard photo-app hues. For each band
@@ -68,7 +100,7 @@ struct EditParams: Equatable, Sendable {
 // bands uniformly — narrow ranges target a single colour, wide ranges
 // blend across neighbours.
 
-struct SelectiveColorParams: Equatable, Sendable {
+struct SelectiveColorParams: Equatable, Sendable, Codable {
     var red:     SIMD3<Float> = .zero
     var orange:  SIMD3<Float> = .zero
     var yellow:  SIMD3<Float> = .zero
@@ -120,28 +152,32 @@ struct SelectiveColorParams: Equatable, Sendable {
 /// it's a buffer trim applied at save time and a screen-space dim
 /// applied at preview time.
 enum CropAspect: String, Equatable, Sendable, CaseIterable, Identifiable {
-    case none, threeToOne, fiveToOne, fourToThree, threeToFour
+    case none, threeToOne, fiveToOne, sixteenToNine, sixteenToTen, fourToThree, threeToFour
 
     var id: String { rawValue }
 
     /// `width / height`. Nil for `.none`.
     var ratio: CGFloat? {
         switch self {
-        case .none:        return nil
-        case .threeToOne:  return 3
-        case .fiveToOne:   return 5
-        case .fourToThree: return 4.0 / 3.0
-        case .threeToFour: return 3.0 / 4.0
+        case .none:          return nil
+        case .threeToOne:    return 3
+        case .fiveToOne:     return 5
+        case .sixteenToNine: return 16.0 / 9.0
+        case .sixteenToTen:  return 16.0 / 10.0
+        case .fourToThree:   return 4.0 / 3.0
+        case .threeToFour:   return 3.0 / 4.0
         }
     }
 
     var label: String {
         switch self {
-        case .none:        return "None"
-        case .threeToOne:  return "3:1"
-        case .fiveToOne:   return "5:1"
-        case .fourToThree: return "4:3"
-        case .threeToFour: return "3:4"
+        case .none:          return "None"
+        case .threeToOne:    return "3:1"
+        case .fiveToOne:     return "5:1"
+        case .sixteenToNine: return "16:9"
+        case .sixteenToTen:  return "16:10"
+        case .fourToThree:   return "4:3"
+        case .threeToFour:   return "3:4"
         }
     }
 }
@@ -221,6 +257,9 @@ struct EditPanel: View {
     /// unaffected — only the per-pixel adjustments are bypassed.
     @Binding var showOriginal: Bool
 
+    @State private var showExporter = false
+    @State private var showImporter = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -236,6 +275,22 @@ struct EditPanel: View {
                 .buttonStyle(.borderless)
                 .help("Show original (compare)")
                 .disabled(params.isIdentity)
+                .padding(.horizontal)
+                Button {
+                    showExporter = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .help("Save adjustments…")
+                .disabled(params.isIdentity)
+                Button {
+                    showImporter = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up.on.square")
+                }
+                .buttonStyle(.borderless)
+                .help("Load adjustments…")
                 .padding(.horizontal)
                 Button("Reset") {
                     params = .identity
@@ -262,6 +317,24 @@ struct EditPanel: View {
         .frame(width: 320)
         .glassEffect(in: .rect(cornerRadius: 10))
         .padding()
+        .fileExporter(
+            isPresented: $showExporter,
+            document: EditParamsDocument(params),
+            contentType: .json,
+            defaultFilename: "panorama-adjustments"
+        ) { _ in }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.json]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url),
+               let p = try? EditParams.decodedJSON(data) {
+                params = p
+            }
+        }
     }
 
     // MARK: Sliders
@@ -312,6 +385,7 @@ struct EditPanel: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
     }
+
 }
 
 // MARK: - SelectiveColorSection
@@ -911,13 +985,17 @@ struct CropPanel: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 10) {
-                Picker("Aspect", selection: $aspect) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4),
+                    spacing: 6
+                ) {
                     ForEach(CropAspect.allCases) { a in
-                        Text(a.label).tag(a)
+                        AspectChip(label: a.label,
+                                   isSelected: aspect == a) {
+                            aspect = a
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
 
                 if aspect != .none {
                     Text("Pan and zoom to frame the crop. Closing the panel applies the crop to the preview and the saved file.")
@@ -936,5 +1014,31 @@ struct CropPanel: View {
         .frame(width: 280)
         .glassEffect(in: .rect(cornerRadius: 10))
         .padding()
+    }
+}
+
+/// Compact chip used in the crop panel's aspect-ratio grid. Selected state
+/// uses the accent colour fill; unselected sits on a faint white pill so
+/// the row reads as a single segmented control split across two rows.
+private struct AspectChip: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .monospacedDigit()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? Color.accentColor : Color.white.opacity(0.08))
+                )
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }

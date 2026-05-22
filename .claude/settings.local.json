@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild -scheme imgTools -configuration Debug)",
+      "Bash(sudo xcode-select -s /Applications/Xcode.app/Contents/Developer)",
+      "Bash(xcode-select -s /Applications/Xcode-beta.app/Contents/Developer)",
+      "Bash(ls /Applications/ | grep -i xcode)",
+      "Bash(xcodebuild -scheme imgTools -configuration Debug -derivedDataPath .derivedData build)",
+      "Bash(xcode-select -p)",
+      "Read(//Applications/**)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme imgTools -configuration Debug -derivedDataPath .derivedData build)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project /Users/zzc/Documents/GitHub/imgTools/imgTools.xcodeproj -scheme imgTools -configuration Debug -destination 'platform=macOS' build)"
+    ]
+  }
+}

@@ -29,6 +29,10 @@ final class PanoContext {
     static let linearColorSpace  = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     static let displayColorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
     static let hdrColorSpace     = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
+    /// PQ (ST.2084) variant of BT.2100 — used as an alternative export color
+    /// space alongside HLG. Display is still routed through `hdrColorSpace`
+    /// (HLG) to avoid the PQ resampler-overshoot issue described above.
+    static let pqColorSpace      = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
 
     private init() {
         guard let dev = MTLCreateSystemDefaultDevice() else {

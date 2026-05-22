@@ -132,7 +132,6 @@ final class ImageStore: @unchecked Sendable {
 struct PanoStitcherView: View {
     @State private var store = ImageStore()
     @State private var showImporter = false
-    @State private var showOpener   = false
     @State private var showEditPanel = false
     @State private var showCropPanel = false
     @State private var showOriginal = false
@@ -172,17 +171,18 @@ struct PanoStitcherView: View {
         .toolbar {
             ToolbarSpacer()
             ToolbarItem {
-                HStack {
-                    Text("f:")
-                        .foregroundStyle(.secondary)
-                    TextField("mm", text: $focalText)
-                        .frame(width: 36)
+                HStack(spacing: 3) {
+                    TextField("24", text: $focalText)
+                        .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .frame(width: 28)
                         .onSubmit { commitFocal() }
                     Text("mm")
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
+                .controlSize(.small)
+                .help("Focal length (35 mm equivalent)")
             }
             ToolbarItem {
                 Button {
@@ -199,38 +199,17 @@ struct PanoStitcherView: View {
                 ) { result in
                     guard case .success(let urls) = result, !urls.isEmpty else { return }
                     let sorted = urls.sorted { $0.lastPathComponent < $1.lastPathComponent }
-                    store.importedURLs = sorted
-                    store.statusText = "\(urls.count) image\(urls.count == 1 ? "" : "s") selected"
-                    autoFillFocal(from: sorted.first)
-                    commitFocal()
-                    Task { await store.loadAndProcess() }
-                }
-            }
-            ToolbarItem {
-                Button {
-                    commitFocal()
-                    Task { await store.loadAndProcess() }
-                } label: {
-                    Image(systemName: "play.fill")
-                }
-                .disabled(store.isLoading)
-                .help("Run pipeline")
-            }
-            ToolbarItem {
-                Button {
-                    showOpener = true
-                } label: {
-                    Image(systemName: "arrow.up.forward.app")
-                }
-                .disabled(store.isLoading)
-                .help("Open single image")
-                .fileImporter(
-                    isPresented: $showOpener,
-                    allowedContentTypes: [.image],
-                    allowsMultipleSelection: false
-                ) { result in
-                    guard case .success(let urls) = result, let url = urls.first else { return }
-                    Task { await store.openStandaloneImage(from: url) }
+                    // Single image → skip the stitcher pipeline and just open
+                    // it for cropping/editing; multi → kick off the stitch.
+                    if sorted.count == 1, let url = sorted.first {
+                        Task { await store.openStandaloneImage(from: url) }
+                    } else {
+                        store.importedURLs = sorted
+                        store.statusText = "\(urls.count) images selected"
+                        autoFillFocal(from: sorted.first)
+                        commitFocal()
+                        Task { await store.loadAndProcess() }
+                    }
                 }
             }
             ToolbarItem {
@@ -257,13 +236,17 @@ struct PanoStitcherView: View {
                 .help("Crop")
             }
             ToolbarItem {
-                Button {
-                    Task { await saveDisplayedImage() }
+                Menu {
+                    ForEach(PanoPipeline.ExportFormat.allCases, id: \.self) { fmt in
+                        Button(fmt.displayName) {
+                            Task { await saveDisplayedImage(format: fmt) }
+                        }
+                    }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
                 .disabled(store.displayBuffer == nil || store.isLoading)
-                .help("Save")
+                .help("Export")
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -292,15 +275,17 @@ struct PanoStitcherView: View {
     }
 
     @MainActor
-    private func saveDisplayedImage() async {
+    private func saveDisplayedImage(format: PanoPipeline.ExportFormat) async {
         guard let buffer = store.displayBuffer else { return }
 
         let isStitched = store.result != nil
-        let defaultName = isStitched ? "panorama.heic" : suggestedName(for: store.displayBufferURL)
-        let title = isStitched ? "Save Panorama (HEIF10 HDR)" : "Save Image (HEIF10 HDR)"
+        let ext = format.fileExtension
+        let defaultName = isStitched ? "panorama.\(ext)" : suggestedName(for: store.displayBufferURL, ext: ext)
+        let kind = isStitched ? "Panorama" : "Image"
+        let title = "Save \(kind) — \(format.displayName)"
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.heic]
+        panel.allowedContentTypes = [format.utType]
         panel.nameFieldStringValue = defaultName
         panel.title = title
         guard let window = NSApp.keyWindow,
@@ -324,13 +309,15 @@ struct PanoStitcherView: View {
             if let result = store.result {
                 try PanoPipeline.save(result: result, to: url,
                                        edits: store.editParams,
-                                       crop: cropRect)
+                                       crop: cropRect,
+                                       format: format)
             } else {
                 try PanoPipeline.save(buffer: buffer, to: url,
                                        edits: store.editParams,
                                        crop: cropRect,
                                        exifSource: store.displayBufferURL,
-                                       writeGPano: false)
+                                       writeGPano: false,
+                                       format: format)
             }
         } catch {
             let alert = NSAlert(error: error)
@@ -338,9 +325,9 @@ struct PanoStitcherView: View {
         }
     }
 
-    private func suggestedName(for source: URL?) -> String {
-        guard let source else { return "image.heic" }
-        return source.deletingPathExtension().lastPathComponent + ".heic"
+    private func suggestedName(for source: URL?, ext: String) -> String {
+        guard let source else { return "image.\(ext)" }
+        return source.deletingPathExtension().lastPathComponent + ".\(ext)"
     }
 
     private func commitFocal() {
