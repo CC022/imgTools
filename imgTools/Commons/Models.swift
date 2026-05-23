@@ -6,16 +6,18 @@ enum ImageOperation: String, CaseIterable {
     case slicer = "Slicer"
     case video = "Images to Video"
     case panoStitch = "Pano Stitcher"
-    case hdmiCapture = "HDMI Capture"
+    case longExposure = "Long Exposure"
+    case hdmiCapture = "Video Capture"
 
     var systemImage: String {
         switch self {
-        case .convert:     return "arrow.triangle.2.circlepath"
-        case .hdrBoost:    return "sparkles"
-        case .slicer:      return "scissors"
-        case .video:       return "film"
-        case .panoStitch:  return "pano"
-        case .hdmiCapture: return "tv"
+        case .convert:       return "arrow.triangle.2.circlepath"
+        case .hdrBoost:      return "sparkles"
+        case .slicer:        return "scissors"
+        case .video:         return "film"
+        case .panoStitch:    return "pano"
+        case .longExposure:  return "camera.aperture"
+        case .hdmiCapture:   return "tv"
         }
     }
 }
@@ -54,17 +56,19 @@ enum ImageToolsError: LocalizedError {
     case noImages
     case videoCreationFailed
     case previewFailed
+    case alignmentFailed
 
     var errorDescription: String? {
         switch self {
-        case .invalidImage:       return "Unable to load image"
-        case .invalidMaskImage:   return "Unable to load mask image"
-        case .unsupportedFormat:  return "Unsupported image format"
-        case .slicingFailed:      return "Failed to create sliced images"
-        case .processingFailed:   return "Failed to process image"
-        case .noImages:           return "No images to process"
+        case .invalidImage:        return "Unable to load image"
+        case .invalidMaskImage:    return "Unable to load mask image"
+        case .unsupportedFormat:   return "Unsupported image format"
+        case .slicingFailed:       return "Failed to create sliced images"
+        case .processingFailed:    return "Failed to process image"
+        case .noImages:            return "No images to process"
         case .videoCreationFailed: return "Failed to create video"
-        case .previewFailed:      return "Failed to render preview"
+        case .previewFailed:       return "Failed to render preview"
+        case .alignmentFailed:     return "Frame alignment failed"
         }
     }
 }

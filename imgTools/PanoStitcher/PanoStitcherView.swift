@@ -237,7 +237,7 @@ struct PanoStitcherView: View {
             }
             ToolbarItem {
                 Menu {
-                    ForEach(PanoPipeline.ExportFormat.allCases, id: \.self) { fmt in
+                    ForEach(ImageExportFormat.allCases, id: \.self) { fmt in
                         Button(fmt.displayName) {
                             Task { await saveDisplayedImage(format: fmt) }
                         }
@@ -275,7 +275,7 @@ struct PanoStitcherView: View {
     }
 
     @MainActor
-    private func saveDisplayedImage(format: PanoPipeline.ExportFormat) async {
+    private func saveDisplayedImage(format: ImageExportFormat) async {
         guard let buffer = store.displayBuffer else { return }
 
         let isStitched = store.result != nil

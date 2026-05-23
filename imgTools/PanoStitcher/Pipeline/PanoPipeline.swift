@@ -553,25 +553,6 @@ enum PanoPipeline {
         )
     }
 
-    /// Available export formats for the Save toolbar menu. The pixel pipeline
-    /// (edits → crop → CIImage) is identical across formats; only the final
-    /// encode call and color-space tag differ.
-    enum ExportFormat: String, CaseIterable, Sendable {
-        case heifHLG
-        case heifPQ
-        case tiff16
-
-        var fileExtension: String { self == .tiff16 ? "tif" : "heic" }
-        var utType: UTType { self == .tiff16 ? .tiff : .heic }
-        var displayName: String {
-            switch self {
-            case .heifHLG: return "HEIF 10-bit (HLG HDR)"
-            case .heifPQ:  return "HEIF 10-bit (PQ HDR)"
-            case .tiff16:  return "TIFF 16-bit (HLG HDR)"
-            }
-        }
-    }
-
     /// Save a `CanvasBuffer` as HEIF10 HDR in HLG space.
     ///
     /// `edits` are baked in via the same `applyEditsKernel` the display
@@ -591,7 +572,7 @@ enum PanoPipeline {
                      exifSource: URL? = nil,
                      writeGPano: Bool = true,
                      quality: Double = 0.95,
-                     format: ExportFormat = .heifHLG) throws {
+                     format: ImageExportFormat = .heifHLG) throws {
         let edited = ImageEditor.apply(edits, to: buffer, storage: .shared)
                   ?? buffer
         let final: CanvasBuffer = {
@@ -602,26 +583,9 @@ enum PanoPipeline {
             throw PanoError.exportFailed("CGImage from blended buffer failed")
         }
 
-        let ctx = PanoContext.shared.hdrCIContext
-        switch format {
-        case .heifHLG:
-            try ctx.writeHEIF10Representation(
-                of: ci, to: url, colorSpace: PanoContext.hdrColorSpace,
-                options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
-            )
-        case .heifPQ:
-            try ctx.writeHEIF10Representation(
-                of: ci, to: url, colorSpace: PanoContext.pqColorSpace,
-                options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
-            )
-        case .tiff16:
-            try ctx.writeTIFFRepresentation(
-                of: ci, to: url,
-                format: .RGBA16,
-                colorSpace: PanoContext.hdrColorSpace,
-                options: [:]
-            )
-        }
+        try saveCIImage(ci, to: url, format: format,
+                        ciContext: PanoContext.shared.hdrCIContext,
+                        quality: quality)
 
         let w = final.width, h = final.height
         injectMetadata(url: url, exifSource: exifSource, writeGPano: writeGPano,
@@ -638,7 +602,7 @@ enum PanoPipeline {
                      edits: EditParams = .identity,
                      crop: CGRect? = nil,
                      quality: Double = 0.95,
-                     format: ExportFormat = .heifHLG) throws {
+                     format: ImageExportFormat = .heifHLG) throws {
         try save(buffer: result.blendedBuffer, to: url,
                   edits: edits, crop: crop,
                   exifSource: result.graph.nodes.first?.image.sourceURL,

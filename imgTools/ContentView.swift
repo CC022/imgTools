@@ -23,6 +23,8 @@ struct ContentView: View {
                 PanoStitcherView()
             case .hdmiCapture:
                 HDMICaptureView()
+            case .longExposure:
+                LongExposureView()
             case nil:
                 Text("Select a tool from the sidebar")
                     .foregroundColor(.secondary)

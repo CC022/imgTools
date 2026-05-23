@@ -1,32 +1,20 @@
 import SwiftUI
 import CoreImage
 
-enum ImageOutputFormat: String, CaseIterable, Sendable {
-    case heif = "HEIF"
-    case exr = "EXR"
-
-    var fileExtension: String {
-        switch self {
-        case .heif: return "heif"
-        case .exr:  return "exr"
-        }
-    }
-}
-
 struct ConvertImagesView: View {
-    @State private var outputFormat: ImageOutputFormat = .heif
+    @State private var outputFormat: ImageExportFormat = .heifHLG
 
     var body: some View {
         let format = outputFormat
         VStack(spacing: 0) {
             HStack {
                 Picker("Format", selection: $outputFormat) {
-                    ForEach(ImageOutputFormat.allCases, id: \.self) { format in
-                        Text(format.rawValue).tag(format)
+                    ForEach(ImageExportFormat.allCases, id: \.self) { f in
+                        Text(f.displayName).tag(f)
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
+                .pickerStyle(.menu)
+                .frame(maxWidth: 260)
                 Spacer()
             }
             .padding(.horizontal)
@@ -39,32 +27,26 @@ struct ConvertImagesView: View {
     }
 }
 
-func convertImage(url: URL, outputFolder: URL?, format: ImageOutputFormat) async throws -> [URL] {
-    let fileExt = format.fileExtension
-    return try await Task.detached {
-        guard let ciImage = CIImage(contentsOf: url) else {
+/// Load the source image with CoreImage and re-encode it via the shared
+/// exporter. The pipeline is intentionally trivial: any per-format
+/// behavior (color space tagging, codec, file extension) is decided by
+/// `saveCIImage(...)` in [ImageExport.swift](../Commons/ImageExport.swift).
+nonisolated func convertImage(url: URL,
+                              outputFolder: URL?,
+                              format: ImageExportFormat) async throws -> [URL] {
+    try await Task.detached {
+        guard let ciImage = CIImage(contentsOf: url, options: [
+            .applyOrientationProperty: true
+        ]) else {
             throw ImageToolsError.invalidImage
         }
-        let context = CIContext()
         let folder = outputFolder ?? url.deletingLastPathComponent()
         let outputURL = folder
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent)
-            .appendingPathExtension(fileExt)
+            .appendingPathExtension(format.fileExtension)
 
-        switch fileExt {
-        case "exr":
-            try context.writeOpenEXRRepresentation(of: ciImage, to: outputURL)
-        case "heif":
-            let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
-            try context.writeHEIF10Representation(
-                of: ciImage,
-                to: outputURL,
-                colorSpace: colorSpace,
-                options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.95]
-            )
-        default:
-            throw ImageToolsError.unsupportedFormat
-        }
+        try saveCIImage(ciImage, to: outputURL, format: format,
+                        ciContext: defaultImageExportCIContext())
         return [outputURL]
     }.value
 }

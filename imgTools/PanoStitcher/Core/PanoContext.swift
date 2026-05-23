@@ -26,13 +26,13 @@ final class PanoContext {
     /// display (and the SDR fallback is graceful by design).
     let hdrCIContext: CIContext
 
-    static let linearColorSpace  = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+    static let linearColorSpace  = ImageExportColorSpace.linearSRGB
     static let displayColorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
-    static let hdrColorSpace     = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
+    static let hdrColorSpace     = ImageExportColorSpace.hlg
     /// PQ (ST.2084) variant of BT.2100 — used as an alternative export color
     /// space alongside HLG. Display is still routed through `hdrColorSpace`
     /// (HLG) to avoid the PQ resampler-overshoot issue described above.
-    static let pqColorSpace      = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+    static let pqColorSpace      = ImageExportColorSpace.pq
 
     private init() {
         guard let dev = MTLCreateSystemDefaultDevice() else {
