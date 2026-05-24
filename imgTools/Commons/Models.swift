@@ -7,6 +7,7 @@ enum ImageOperation: String, CaseIterable {
     case video = "Images to Video"
     case panoStitch = "Pano Stitcher"
     case longExposure = "Long Exposure"
+    case spatialPhoto = "Spatial Photo"
     case hdmiCapture = "Video Capture"
 
     var systemImage: String {
@@ -18,6 +19,7 @@ enum ImageOperation: String, CaseIterable {
         case .panoStitch:    return "pano"
         case .longExposure:  return "camera.aperture"
         case .hdmiCapture:   return "tv"
+        case .spatialPhoto:  return "cube.transparent"
         }
     }
 }
@@ -39,12 +41,15 @@ enum ActiveImporter: Hashable {
     case images
     case hdrInput
     case hdrMask
+    case spatialLeft
+    case spatialRight
     case outputFolder
 }
 
 enum PendingOutputAction {
     case processAll
     case hdrBoost(inputURL: URL, maskURL: URL)
+    case spatial(leftURL: URL, rightURL: URL)
 }
 
 enum ImageToolsError: LocalizedError {

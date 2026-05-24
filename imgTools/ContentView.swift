@@ -25,6 +25,8 @@ struct ContentView: View {
                 HDMICaptureView()
             case .longExposure:
                 LongExposureView()
+            case .spatialPhoto:
+                SpatialPhotoView()
             case nil:
                 Text("Select a tool from the sidebar")
                     .foregroundColor(.secondary)
