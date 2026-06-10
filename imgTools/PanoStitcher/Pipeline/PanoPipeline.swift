@@ -111,21 +111,16 @@ enum PanoPipeline {
         dbg("[Pipeline] canvas: \(canvas.size.x)×\(canvas.size.y) px, radius=\(canvas.radius)")
         await tracker.advance("Computed canvas")
 
-        // 8 — Brown-Lowe exposure / white-balance compensation. Estimate from
-        //     pairwise on-demand warps, then apply each gain during the
-        //     streaming blend.
+        // 8 + 8.5 — Low-res prepass shared by Brown-Lowe exposure estimation
+        //     and content-aware seam labels (Voronoi fallback). Gains are
+        //     applied per image during the streaming blend; the seam mask is
+        //     applied to each warped image just before pyramid accumulation.
         let t_exp = Date()
         await tracker.update("Estimating exposure")
-        let exposureGains = estimateExposureGains(graph: graph, canvas: canvas)
-        dbg("[Pipeline] exposure estimation (\(elapsed(t_exp)) ms)")
+        let (exposureGains, seamMasking) = prepareExposureAndSeams(graph: graph,
+                                                                   canvas: canvas)
+        dbg("[Pipeline] exposure + seam preparation (\(elapsed(t_exp)) ms)")
         await tracker.advance("Estimated exposure")
-
-        // 8.5 — Seam state. Mask is applied to each warped image just before
-        //       pyramid accumulation.
-        let t_seam = Date()
-        await tracker.update("Preparing seams")
-        let seamState = SeamFinder.makeCoverageState(graph: graph, canvas: canvas)
-        dbg("[Pipeline] seam preparation (\(elapsed(t_seam)) ms)")
         await tracker.advance("Prepared seams")
 
         // 9 — Burt-Adelson Laplacian-pyramid blend, streaming one image at a
@@ -135,7 +130,7 @@ enum PanoPipeline {
         guard let blended = await blendStream(graph: graph,
                                                canvas: canvas,
                                                exposureGains: exposureGains,
-                                               seamState: seamState,
+                                               seamMasking: seamMasking,
                                                progress: tracker) else {
             dbg("[Pipeline] blend dispatch failed")
             return nil
@@ -321,23 +316,32 @@ enum PanoPipeline {
     /// texture is loaded inside this function and released when it returns;
     /// only the output `CanvasBuffer` survives. Returns nil if the node has
     /// no pose or any allocation/decode fails.
+    ///
+    /// Pass a downscaled `canvas` (same origin, radius/s, size/s) and a
+    /// `maxSourceLongEdge` for low-resolution warps — the kernel's
+    /// `θ = origin + x/radius` mapping needs no other change. Intrinsics are
+    /// rescaled to the loaded texture the same way the detection pass does.
     private static func warpNode(_ node: PanoNode,
                                   canvas: CylindricalCanvas,
-                                  pso: MTLComputePipelineState) -> CanvasBuffer? {
+                                  pso: MTLComputePipelineState,
+                                  storage: MTLStorageMode = .private,
+                                  maxSourceLongEdge: Int? = nil) -> CanvasBuffer? {
         let ctx = PanoContext.shared
         guard let pose = node.pose,
-              let imgTex = try? node.image.loadTexture(),
+              let imgTex = try? node.image.loadTexture(maxLongEdge: maxSourceLongEdge),
               let outBuf = ctx.makeHalfBuffer(width: canvas.size.x,
-                                               height: canvas.size.y) else {
+                                               height: canvas.size.y,
+                                               storage: storage) else {
             dbg("[Pipeline] warp: missing pose, source texture, or output buffer for node \(node.id)")
             return nil
         }
 
+        let srcScale = Float(imgTex.width) / Float(node.image.width)
         var params = CylindricalWarpParams(
             R:              pose.rotation,
-            focal:          pose.intrinsics.focal,
+            focal:          pose.intrinsics.focal * srcScale,
             canvasRadius:   canvas.radius,
-            principalPoint: pose.intrinsics.principalPoint,
+            principalPoint: pose.intrinsics.principalPoint * srcScale,
             canvasOrigin:   canvas.origin,
             imageSize:      SIMD2(Float(imgTex.width), Float(imgTex.height)),
             canvasSize:     SIMD2(Float(canvas.size.x), Float(canvas.size.y))
@@ -370,6 +374,88 @@ enum PanoPipeline {
                 return warpNode(graph.nodes[idx], canvas: canvas, pso: pso)
             }
         )
+    }
+
+    // MARK: - Low-res seam prepass (shared by exposure + seam finding)
+
+    /// All images warped onto a downscaled canvas, CPU-readable. Built once,
+    /// used for exposure-gain estimation and content-aware seam labels, then
+    /// released before the full-res streaming blend.
+    struct SeamPrepass {
+        let lowCanvas: CylindricalCanvas
+        /// Integer downscale factor relative to the full-res canvas.
+        let scale: Int
+        /// One rgba16f `.shared` warp per graph node.
+        let warps: [CanvasBuffer]
+    }
+
+    /// Target ~1.2 MP total for the low-res canvas — plenty for seam routing
+    /// and overlap statistics, cheap enough to keep all n warps resident.
+    private static func makeSeamPrepass(graph: PanoGraph,
+                                        canvas: CylindricalCanvas) -> SeamPrepass? {
+        guard graph.nodes.count >= 2,
+              let pso = PanoContext.shared.loadPSO("cylindricalWarp")
+        else { return nil }
+
+        let W = canvas.size.x, H = canvas.size.y
+        let s = max(1, Int((Double(W * H) / 1_200_000.0).squareRoot().rounded(.up)))
+        let low = CylindricalCanvas(radius: canvas.radius / Float(s),
+                                    origin: canvas.origin,
+                                    size: SIMD2<Int>(max(1, W / s), max(1, H / s)))
+
+        var warps: [CanvasBuffer] = []
+        warps.reserveCapacity(graph.nodes.count)
+        for node in graph.nodes {
+            guard let w = warpNode(node, canvas: low, pso: pso,
+                                   storage: .shared, maxSourceLongEdge: 2048) else {
+                dbg("[Seam] prepass: warp failed for node \(node.id) — falling back")
+                return nil
+            }
+            warps.append(w)
+        }
+        dbg("[Seam] prepass: scale=\(s), low canvas \(low.size.x)×\(low.size.y)")
+        return SeamPrepass(lowCanvas: low, scale: s, warps: warps)
+    }
+
+    /// Steps 8 + 8.5: exposure gains and seam masking. Scoped so the n
+    /// low-res prepass warps are released on return — only the 1 B/px label
+    /// buffer (or the small Voronoi centre buffer) survives into the blend.
+    private static func prepareExposureAndSeams(graph: PanoGraph,
+                                                canvas: CylindricalCanvas)
+                                                -> ([SIMD3<Float>], SeamMasking) {
+        let prepass = makeSeamPrepass(graph: graph, canvas: canvas)
+
+        // Brown-Lowe gains from overlap means — statistically identical at
+        // low res, so reuse the prepass warps; full-res per-pair path only
+        // when the prepass is unavailable.
+        let gains: [SIMD3<Float>]
+        if let prepass {
+            gains = ExposureCompensator.estimateGains(
+                imageCount: graph.nodes.count,
+                canvas: prepass.lowCanvas,
+                makeWarped: { prepass.warps.indices.contains($0) ? prepass.warps[$0] : nil }
+            )
+        } else {
+            gains = estimateExposureGains(graph: graph, canvas: canvas)
+        }
+
+        // Content-aware DP seam labels on gain-corrected warps (estimate
+        // first, then apply, so seam costs reflect final colours).
+        var masking: SeamMasking = .none
+        if let prepass {
+            for (i, w) in prepass.warps.enumerated() where i < gains.count {
+                ExposureCompensator.apply(gain: gains[i], to: w)
+            }
+            if let labels = SeamFinder.computeLabels(graph: graph, canvas: canvas,
+                                                     prepass: prepass) {
+                masking = .labels(labels)
+            }
+        }
+        if case .none = masking,
+           let voronoi = SeamFinder.makeCoverageState(graph: graph, canvas: canvas) {
+            masking = .voronoi(voronoi)
+        }
+        return (gains, masking)
     }
 
     // MARK: - Pyramid helpers
@@ -421,7 +507,7 @@ enum PanoPipeline {
     private static func blendStream(graph: PanoGraph,
                                      canvas: CylindricalCanvas,
                                      exposureGains: [SIMD3<Float>],
-                                     seamState: SeamFinder.CoverageState?,
+                                     seamMasking: SeamMasking,
                                      progress: ProgressTracker) async -> CanvasBuffer? {
         let ctx = PanoContext.shared
         let W = canvas.size.x, H = canvas.size.y
@@ -450,7 +536,11 @@ enum PanoPipeline {
             if i < exposureGains.count {
                 ExposureCompensator.apply(gain: exposureGains[i], to: warped)
             }
-            SeamFinder.applyVoronoi(state: seamState, warped: warped, selfIndex: UInt32(i))
+            switch seamMasking {
+            case .labels(let st):  SeamFinder.applyLabels(state: st, warped: warped, selfIndex: UInt32(i))
+            case .voronoi(let st): SeamFinder.applyVoronoi(state: st, warped: warped, selfIndex: UInt32(i))
+            case .none:            break
+            }
 
             guard accumulate(image: warped, into: acc,
                               W: W, H: H, nLevels: nLevels, k: k, ctx: ctx)
