@@ -2,73 +2,69 @@
 //  ExposureCompensator.swift
 //  panoDev
 //
-//  Brown & Lowe (2007) per-image gain compensation. Buffer-backed.
-//  Three independent N×N solves (one per RGB channel) → exposure AND
-//  white-balance correction in a single pass.
+//  Brown & Lowe (2007) per-image gain compensation. Three independent N×N
+//  solves (one per RGB channel) → exposure AND white-balance correction in
+//  a single pass.
 //
-//  Streaming-friendly split:
-//
-//    • `estimateGains(imageCount:canvas:makeWarped:)` — pairwise overlap
-//      stats + Gauss elim, returning per-image gains. The warped buffers
-//      are produced lazily by the caller's `makeWarped(i)` callback so
-//      the estimator only ever holds the two warps for the current pair
-//      plus the small partial-sum reduction buffers.
-//
-//    • `apply(gain:to:)` — single in-place RGB scale dispatch, used by
-//      the streaming blend on each transient warp before accumulation.
+//  Statistics come from one CPU scan of the low-res prepass warps (rgba16f,
+//  `.shared` storage): pairwise overlap means at ~1 MP are statistically
+//  identical to full resolution, and a single scan covers all n(n−1)/2
+//  pairs at once. The solved gains are applied on the GPU by the fused
+//  `cylindricalWarpMasked` kernel during the streaming blend.
 //
 
+import Foundation
 import Metal
 import simd
-import Foundation
 
-enum ExposureCompensator {
+nonisolated enum ExposureCompensator {
 
     private static let sigmaN: Double = 10.0 / 255.0
     private static let sigmaG: Double = 0.10
 
-    // MARK: - Estimate
-
-    /// Returns per-image RGB gain factors (length `n`). Identity gains on
-    /// failure or trivial input (`n < 2`).
-    static func estimateGains(imageCount n: Int,
-                              canvas: CylindricalCanvas,
-                              makeWarped: (Int) -> CanvasBuffer?) -> [SIMD3<Float>] {
+    /// Returns per-image RGB gain factors (length `warps.count`). Identity
+    /// gains on trivial input (`n < 2`). All warps share one canvas size.
+    static func estimateGains(warps: [CanvasBuffer]) -> [SIMD3<Float>] {
+        let n = warps.count
         let identity = Array(repeating: SIMD3<Float>(repeating: 1), count: n)
-        guard n >= 2 else { return identity }
-        let ctx = PanoContext.shared
-        guard let statsPSO = ctx.loadPSO("overlapStatsReducePair") else { return identity }
+        guard n >= 2, let first = warps.first else { return identity }
+        let W = first.width, H = first.height
 
-        let W = canvas.size.x, H = canvas.size.y
-        let tgX = (W + 15) / 16, tgY = (H + 15) / 16, tgCount = tgX * tgY
-        let bufBytes = tgCount * MemoryLayout<SIMD4<Float>>.stride
-
-        guard let bufA = ctx.device.makeBuffer(length: bufBytes, options: .storageModeShared),
-              let bufB = ctx.device.makeBuffer(length: bufBytes, options: .storageModeShared)
-        else { return identity }
+        let px: [UnsafePointer<Float16>] = warps.map {
+            UnsafePointer($0.buffer.contents()
+                .bindMemory(to: Float16.self, capacity: W * H * 4))
+        }
 
         // Pairwise overlap stats: I[i][j] = mean RGB of i in overlap with j.
+        // Overlap = both alphas exceed 0.5 (binary inside / outside masks).
         var I = Array(repeating: Array(repeating: SIMD3<Double>.zero, count: n), count: n)
         var N = Array(repeating: Array(repeating: 0,                   count: n), count: n)
-
-        for i in 0..<n {
-            for j in (i + 1)..<n {
-                guard let warpedA = makeWarped(i),
-                      let warpedB = makeWarped(j) else { continue }
-                Compute.run { cb in
-                    Compute.encode(cb, statsPSO,
-                        buffers: [warpedA.buffer, warpedB.buffer, bufA, bufB],
-                        dims:    [warpedA.dimsPacked],
-                        gridW:   tgX * 16, gridH: tgY * 16)
-                }
-                let (sA, count) = sumPartials(buf: bufA, count: tgCount)
-                let (sB, _    ) = sumPartials(buf: bufB, count: tgCount)
-                if count > 0 {
-                    I[i][j] = sA / Double(count)
-                    I[j][i] = sB / Double(count)
-                }
-                N[i][j] = count; N[j][i] = count
+        var covered = [Int](repeating: 0, count: n)
+        for idx in 0..<(W * H) {
+            var m = 0
+            for k in 0..<n where Float(px[k][idx * 4 + 3]) > 0.5 {
+                covered[m] = k
+                m += 1
             }
+            guard m >= 2 else { continue }
+            for a in 0..<(m - 1) {
+                let i = covered[a]
+                let rgbI = SIMD3<Double>(Double(px[i][idx * 4]),
+                                         Double(px[i][idx * 4 + 1]),
+                                         Double(px[i][idx * 4 + 2]))
+                for b in (a + 1)..<m {
+                    let j = covered[b]
+                    I[i][j] += rgbI
+                    I[j][i] += SIMD3<Double>(Double(px[j][idx * 4]),
+                                             Double(px[j][idx * 4 + 1]),
+                                             Double(px[j][idx * 4 + 2]))
+                    N[i][j] += 1
+                    N[j][i] += 1
+                }
+            }
+        }
+        for i in 0..<n {
+            for j in 0..<n where N[i][j] > 0 { I[i][j] /= Double(N[i][j]) }
         }
 
         // Per-channel solve.
@@ -87,37 +83,6 @@ enum ExposureCompensator {
         }.joined(separator: " ")
         dbg("[Exposure] gains: \(report)")
         return gains
-    }
-
-    // MARK: - Apply
-
-    /// In-place RGB gain scale on a single warped buffer. No-op for identity.
-    static func apply(gain: SIMD3<Float>, to warped: CanvasBuffer) {
-        if gain == SIMD3<Float>(1, 1, 1) { return }
-        let ctx = PanoContext.shared
-        guard let applyPSO = ctx.loadPSO("applyExposureGain") else { return }
-        var g = gain
-        Compute.run { cb in
-            withUnsafeBytes(of: &g) { raw in
-                Compute.encode(cb, applyPSO,
-                    buffers: [warped.buffer],
-                    dims:    [warped.dimsPacked],
-                    bytes:   [(raw.baseAddress!, raw.count)],
-                    gridW: warped.width, gridH: warped.height)
-            }
-        }
-    }
-
-    // MARK: - CPU partial-sum reduction
-
-    private static func sumPartials(buf: MTLBuffer, count: Int) -> (SIMD3<Double>, Int) {
-        let p = buf.contents().bindMemory(to: SIMD4<Float>.self, capacity: count)
-        var sR = 0.0, sG = 0.0, sB = 0.0, total = 0.0
-        for k in 0..<count {
-            let v = p[k]
-            sR += Double(v.x); sG += Double(v.y); sB += Double(v.z); total += Double(v.w)
-        }
-        return (SIMD3<Double>(sR, sG, sB), Int(total))
     }
 
     // MARK: - Linear solve (Brown-Lowe gain system)

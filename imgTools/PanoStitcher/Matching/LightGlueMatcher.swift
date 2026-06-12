@@ -14,7 +14,7 @@
 import CoreML
 import Foundation
 
-final class LightGlueMatcher {
+nonisolated final class LightGlueMatcher {
 
     /// Must match the `N` constant in `scripts/convert_lightglue.py`.
     static let maxKeypoints = 1024

@@ -6,7 +6,7 @@ import Foundation
 /// Unified set of image output formats available across every tool in the
 /// app. Each case knows its file extension, UTType, and a human-readable
 /// label suitable for a Picker.
-enum ImageExportFormat: String, CaseIterable, Sendable {
+nonisolated enum ImageExportFormat: String, CaseIterable, Sendable {
     case heifHLG
     case heifPQ
     case tiff16
@@ -36,7 +36,7 @@ enum ImageExportFormat: String, CaseIterable, Sendable {
     }
 }
 
-enum ImageExportColorSpace {
+nonisolated enum ImageExportColorSpace {
     static let hlg = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
     static let pq  = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
     static let linearSRGB = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!

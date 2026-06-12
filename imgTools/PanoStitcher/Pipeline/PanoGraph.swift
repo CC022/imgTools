@@ -18,7 +18,7 @@ import simd
 // MARK: - Node
 
 /// One source image plus everything we know about it.
-struct PanoNode: @unchecked Sendable {
+nonisolated struct PanoNode: @unchecked Sendable {
     let id: Int
     let image: PanoImage
     let keypoints: [Keypoint]
@@ -36,7 +36,7 @@ struct PanoNode: @unchecked Sendable {
 // MARK: - Edge
 
 /// One pairwise relationship between two nodes.
-struct PanoEdge: Sendable {
+nonisolated struct PanoEdge: Sendable {
     let src: Int
     let dst: Int
     let matches: [Match]
@@ -64,7 +64,7 @@ struct PanoEdge: Sendable {
 
 // MARK: - Graph
 
-struct PanoGraph: @unchecked Sendable {
+nonisolated struct PanoGraph: @unchecked Sendable {
     var nodes: [PanoNode]
     var edges: [PanoEdge]
 

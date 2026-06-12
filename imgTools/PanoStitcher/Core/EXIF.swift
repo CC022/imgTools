@@ -13,7 +13,7 @@ import Foundation
 import ImageIO
 import CoreGraphics
 
-enum EXIF {
+nonisolated enum EXIF {
 
     /// Returns the best-available 35-mm-equivalent focal length in mm.
     /// Preference order: `FocalLenIn35mmFilm` → `FocalLength` → nil.

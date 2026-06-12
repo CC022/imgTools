@@ -20,7 +20,7 @@ import Foundation
 
 // MARK: - Canvas
 
-struct CylindricalCanvas: Sendable {
+nonisolated struct CylindricalCanvas: Sendable {
     /// Pixels per radian along the equator. Defaults to anchor's pixel focal length.
     var radius: Float
     /// (θ, h) of canvas pixel (0, 0).
@@ -80,7 +80,7 @@ struct CylindricalCanvas: Sendable {
 
 /// Forward-project an image-space pixel to cylinder (θ, h) via its camera pose.
 /// `pose.rotation` is world→camera, so camera→world is `pose.rotation.transpose`.
-func projectImagePixelToCylinder(_ pixel: SIMD2<Float>,
+nonisolated func projectImagePixelToCylinder(_ pixel: SIMD2<Float>,
                                   pose: CameraPose) -> SIMD2<Float> {
     let camRay   = pose.intrinsics.Kinv * SIMD3<Float>(pixel.x, pixel.y, 1)
     let worldRay = pose.rotation.transpose * camRay
@@ -104,7 +104,7 @@ func projectImagePixelToCylinder(_ pixel: SIMD2<Float>,
 ///   imageSize        8
 ///   canvasSize       8
 ///   _pad             8  ← brings total to 96, matching Metal's 16-byte-aligned struct
-struct CylindricalWarpParams {
+nonisolated struct CylindricalWarpParams {
     var R: simd_float3x3
     var focal: Float
     var canvasRadius: Float
@@ -112,5 +112,18 @@ struct CylindricalWarpParams {
     var canvasOrigin: SIMD2<Float>
     var imageSize: SIMD2<Float>
     var canvasSize: SIMD2<Float>
-    var _pad: SIMD2<Float> = .zero   // padding to reach 96 bytes (Metal struct alignment)
+    /// Canvas-pixel position of output pixel (0, 0); zero for full warps.
+    /// (Occupies the bytes that were previously struct padding — total stays
+    /// 96, matching Metal's 16-byte-aligned struct.)
+    var roiOrigin: SIMD2<Float> = .zero
+}
+
+/// Mirrors the `MaskParams` struct in `CylindricalWarp.metal` (32 bytes:
+/// float3 gain occupies 16, then four uints).
+nonisolated struct WarpMaskParams {
+    var gain: SIMD3<Float>
+    var selfIndex: UInt32
+    var labelScale: UInt32
+    var lowW: UInt32
+    var lowH: UInt32
 }

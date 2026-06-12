@@ -8,7 +8,7 @@
 
 import Metal
 
-enum Compute {
+nonisolated enum Compute {
 
     /// 16×16 threadgroup — same shape every kernel uses. Grid is rounded up.
     private static let tg = MTLSize(width: 16, height: 16, depth: 1)

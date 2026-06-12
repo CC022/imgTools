@@ -25,7 +25,7 @@
 import simd
 import Foundation
 
-enum RotationRefiner {
+nonisolated enum RotationRefiner {
 
     static func refine(graph: inout PanoGraph,
                        anchor: Int,

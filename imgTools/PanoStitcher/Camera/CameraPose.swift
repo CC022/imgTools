@@ -20,7 +20,7 @@ import Foundation
 
 // MARK: - Intrinsics
 
-struct Intrinsics: Sendable {
+nonisolated struct Intrinsics: Sendable {
     /// Focal length in pixel units (NOT mm).
     var focal: Float
     /// Principal point in pixel coords. Defaults to the image centre.
@@ -61,7 +61,7 @@ struct Intrinsics: Sendable {
 
 // MARK: - Pose
 
-struct CameraPose: Sendable {
+nonisolated struct CameraPose: Sendable {
     var intrinsics: Intrinsics
     /// Orthonormal rotation; world → camera.
     var rotation: simd_float3x3
@@ -76,7 +76,7 @@ struct CameraPose: Sendable {
 
 /// Project an unnormalised 3×3 matrix to the closest rotation in SO(3) via SVD.
 /// Required after computing R̂ = K⁻¹ · H · K, which is generally not orthonormal.
-func projectToSO3(_ M: simd_float3x3) -> simd_float3x3 {
+nonisolated func projectToSO3(_ M: simd_float3x3) -> simd_float3x3 {
     // simd has no SVD, but for 3×3 we can write it via eigendecomposition of MᵀM.
     // Simpler: iterative orthonormalisation via Newton's method on the polar
     // decomposition — converges in 4–6 iterations and avoids SVD entirely.
@@ -105,7 +105,7 @@ func projectToSO3(_ M: simd_float3x3) -> simd_float3x3 {
 ///     P_cam_j = R_ij · P_cam_i             (rotation only between i and j)
 ///     H_ij    = K_j · R_ij · K_i⁻¹
 ///   ⇒ R_ij    = K_j⁻¹ · H_ij · K_i
-func relativeRotation(from H: simd_float3x3,
+nonisolated func relativeRotation(from H: simd_float3x3,
                       Ki: Intrinsics,
                       Kj: Intrinsics) -> simd_float3x3 {
     projectToSO3(Kj.Kinv * H * Ki.K)
@@ -113,7 +113,7 @@ func relativeRotation(from H: simd_float3x3,
 
 /// Convert axis-angle (3-vector, magnitude = angle in rad) to a 3×3 rotation.
 /// Used by RotationRefiner to parameterise updates.
-func rotationFromAxisAngle(_ aa: SIMD3<Float>) -> simd_float3x3 {
+nonisolated func rotationFromAxisAngle(_ aa: SIMD3<Float>) -> simd_float3x3 {
     let theta = simd_length(aa)
     if theta < 1e-9 { return matrix_identity_float3x3 }
     let k = aa / theta
@@ -133,7 +133,7 @@ func rotationFromAxisAngle(_ aa: SIMD3<Float>) -> simd_float3x3 {
 }
 
 /// Inverse of `rotationFromAxisAngle`. Returns axis-angle (3-vector).
-func axisAngleFromRotation(_ R: simd_float3x3) -> SIMD3<Float> {
+nonisolated func axisAngleFromRotation(_ R: simd_float3x3) -> SIMD3<Float> {
     // Stable conversion via the matrix-log form.
     let trace = R.columns.0.x + R.columns.1.y + R.columns.2.z
     let cos_t = simd_clamp((trace - 1) / 2, -1, 1)

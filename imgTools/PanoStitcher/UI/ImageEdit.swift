@@ -33,7 +33,7 @@ import UniformTypeIdentifiers
 // 16-byte aligned, matching what the Metal compiler does for the
 // trailing `float3` fields. Total stride: 96 bytes both sides.
 
-struct EditParams: Equatable, Sendable, Codable {
+nonisolated struct EditParams: Equatable, Sendable, Codable {
     var exposure:    Float = 0   // stops
     var highlights:  Float = 0
     var shadows:     Float = 0
@@ -100,7 +100,7 @@ struct EditParamsDocument: FileDocument {
 // bands uniformly — narrow ranges target a single colour, wide ranges
 // blend across neighbours.
 
-struct SelectiveColorParams: Equatable, Sendable, Codable {
+nonisolated struct SelectiveColorParams: Equatable, Sendable, Codable {
     var red:     SIMD3<Float> = .zero
     var orange:  SIMD3<Float> = .zero
     var yellow:  SIMD3<Float> = .zero
@@ -184,7 +184,7 @@ enum CropAspect: String, Equatable, Sendable, CaseIterable, Identifiable {
 
 // MARK: - ImageEditor (export-side dispatch)
 
-enum ImageEditor {
+nonisolated enum ImageEditor {
 
     /// Bake `params` into a freshly allocated CanvasBuffer of the same
     /// dimensions as `src`. Identity params skip the kernel and return `src`.

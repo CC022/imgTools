@@ -7,9 +7,9 @@
 //    • `PanoImage`    — pure metadata (dimensions, source URL, original colour
 //                       space). Cheap, immutable, sharable; safe to keep for
 //                       the entire pipeline lifetime.
-//    • `ImageTexture` — a loaded full-res GPU texture. Lifetime is the value's
-//                       lifetime — drop the `ImageTexture` to free GPU memory.
-//                       No "is the texture loaded?" state.
+//    • `ImageTexture` — a loaded GPU texture (full-res or a downscaled
+//                       decode). Lifetime is the value's lifetime — drop the
+//                       `ImageTexture` to free GPU memory.
 //
 //  Colour-space contract
 //  ─────────────────────
@@ -26,16 +26,17 @@ import CoreGraphics
 
 // MARK: - PanoImage (metadata)
 
-struct PanoImage: Sendable {
+nonisolated struct PanoImage: Sendable {
     let width: Int
     let height: Int
     let sourceURL: URL
     /// Original colour space of the source file — used for display and export.
     let colorSpace: CGColorSpace
 
-    /// Decode `sourceURL` and upload a fresh full-res rgba16Float MTLTexture.
-    /// Each call produces an independent texture; the caller owns the
-    /// returned `ImageTexture` and releases the texture by dropping the value.
+    /// Decode `sourceURL` and upload a fresh rgba16Float MTLTexture, capped
+    /// to `maxLongEdge` when given. Each call produces an independent
+    /// texture; the caller owns the returned `ImageTexture` and releases the
+    /// texture by dropping the value.
     func loadTexture(maxLongEdge: Int? = nil) throws -> ImageTexture {
         try loadImageTexture(url: sourceURL, maxLongEdge: maxLongEdge)
     }
@@ -43,7 +44,7 @@ struct PanoImage: Sendable {
 
 // MARK: - ImageTexture (loaded GPU resource)
 
-struct ImageTexture: @unchecked Sendable {
+nonisolated struct ImageTexture: @unchecked Sendable {
     let image: PanoImage
     /// rgba16Float, scene-linear extendedLinearSRGB, top-left origin.
     let texture: MTLTexture

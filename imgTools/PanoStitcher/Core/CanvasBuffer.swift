@@ -14,7 +14,7 @@ import Foundation
 import CoreImage
 import CoreGraphics
 
-struct CanvasBuffer: @unchecked Sendable {
+nonisolated struct CanvasBuffer: @unchecked Sendable {
     let buffer: MTLBuffer
     let width: Int
     let height: Int
@@ -28,7 +28,7 @@ struct CanvasBuffer: @unchecked Sendable {
     var dimsPacked: SIMD2<UInt32> { SIMD2(UInt32(width), UInt32(height)) }
 }
 
-extension PanoContext {
+nonisolated extension PanoContext {
     /// rgba16f canvas buffer (8 B/pixel — pipeline's primary format).
     func makeHalfBuffer(width: Int, height: Int,
                          storage: MTLStorageMode = .private) -> CanvasBuffer? {
@@ -55,7 +55,7 @@ extension PanoContext {
 
 // MARK: - Display / export bridges
 
-extension CanvasBuffer {
+nonisolated extension CanvasBuffer {
     /// Build a CGImage from this buffer's bytes (only valid when storage is shared).
     /// Assumes `rgba16f` (the only display-bound format we currently produce).
     func cgImage(colorSpace: CGColorSpace) -> CGImage? {

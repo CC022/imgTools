@@ -8,14 +8,14 @@
 
 import Foundation
 
-private let logPath = "/tmp/panoDev_debug.log"
-private let logHandle: FileHandle? = {
+nonisolated private let logPath = "/tmp/panoDev_debug.log"
+nonisolated(unsafe) private let logHandle: FileHandle? = {
     FileManager.default.createFile(atPath: logPath, contents: nil)
     return FileHandle(forWritingAtPath: logPath)
 }()
-private let logQ = DispatchQueue(label: "panoDev.debuglog")
+nonisolated(unsafe) private let logQ = DispatchQueue(label: "panoDev.debuglog")
 
-func dbg(_ message: String,
+nonisolated func dbg(_ message: String,
          file: String = #fileID,
          line: Int = #line) {
     let ts = String(format: "%.3f", Date().timeIntervalSinceReferenceDate)

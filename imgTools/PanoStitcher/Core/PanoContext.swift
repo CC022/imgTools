@@ -7,7 +7,7 @@ import Metal
 import CoreImage
 import CoreGraphics
 
-final class PanoContext {
+nonisolated final class PanoContext {
 
     static let shared = PanoContext()
 

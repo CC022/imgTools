@@ -28,10 +28,11 @@ import CoreGraphics
 /// loaded `ImageTexture`. The caller owns the result; release the texture by
 /// dropping the returned value.
 ///
-/// - Parameter maxLongEdge: if non-nil, the image is uniformly downscaled so
-///   its long edge is at most this many pixels. Use this for the detection
-///   pass only; pass nil for full-resolution warping.
-func loadImageTexture(url: URL, maxLongEdge: Int? = nil) throws -> ImageTexture {
+/// - Parameter maxLongEdge: if non-nil, the image is Lanczos-downscaled so
+///   its long edge is at most this many pixels (detection / low-res warps).
+///   The returned `PanoImage` metadata always records the *original* pixel
+///   dimensions; consumers read decoded sizes from the texture.
+nonisolated func loadImageTexture(url: URL, maxLongEdge: Int? = nil) throws -> ImageTexture {
     guard url.isFileURL,
           FileManager.default.fileExists(atPath: url.path) else {
         throw PanoError.fileNotFound(url)
@@ -47,18 +48,16 @@ func loadImageTexture(url: URL, maxLongEdge: Int? = nil) throws -> ImageTexture 
     // Remember the original profile for output; fall back to sRGB if untagged.
     let originalColorSpace = ci.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
 
-    // Optionally downscale (detection pass only — never for the warp pass).
     let srcW = ci.extent.width
     let srcH = ci.extent.height
     let finalCI: CIImage
-    if let cap = maxLongEdge {
-        let scale = min(1.0, CGFloat(cap) / max(srcW, srcH))
-        if scale < 1.0 {
-            finalCI = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            dbg("[Loader] \(url.lastPathComponent): \(Int(srcW))×\(Int(srcH)) → \(Int(srcW*scale))×\(Int(srcH*scale)) (detection scale \(String(format:"%.3f", scale)))")
-        } else {
-            finalCI = ci
-        }
+    if let cap = maxLongEdge,
+       case let scale = CGFloat(cap) / max(srcW, srcH), scale < 1.0 {
+        finalCI = ci.applyingFilter("CILanczosScaleTransform", parameters: [
+            kCIInputScaleKey:       scale,
+            kCIInputAspectRatioKey: 1.0,
+        ])
+        dbg("[Loader] \(url.lastPathComponent): \(Int(srcW))×\(Int(srcH)) → \(Int(srcW*scale))×\(Int(srcH*scale)) (scale \(String(format:"%.3f", scale)))")
     } else {
         finalCI = ci
     }
@@ -91,7 +90,10 @@ func loadImageTexture(url: URL, maxLongEdge: Int? = nil) throws -> ImageTexture 
         colorSpace: PanoContext.linearColorSpace
     )
 
-    let image = PanoImage(width: width, height: height,
+    // Metadata carries the original dimensions even when the texture is a
+    // downscaled decode — intrinsics and canvas geometry are derived from
+    // these, and per-texture consumers rescale by texture/metadata ratio.
+    let image = PanoImage(width: Int(srcW.rounded()), height: Int(srcH.rounded()),
                           sourceURL: url, colorSpace: originalColorSpace)
     return ImageTexture(image: image, texture: texture)
 }

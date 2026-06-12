@@ -13,7 +13,7 @@ import Foundation
 
 // MARK: - SuperPointDetector
 
-final class SuperPointDetector {
+nonisolated final class SuperPointDetector {
 
     // ── CoreML model ────────────────────────────────────────────────────────────
     private let model: MLModel?
@@ -85,8 +85,19 @@ final class SuperPointDetector {
             return []
         }
 
-        let W = image.width
-        let H = image.height
+        // SuperPoint's detector grid is 8×8 cells. Crop the analysis region
+        // down to multiples of 8 so the model input, score map, NMS bounds,
+        // and descriptor grid all agree for any texture size — decoders can
+        // produce e.g. 1537-px-wide images (CoreImage ceils fractional
+        // Lanczos extents), and an un-cropped 1537 width would index past
+        // the 1536-px score map. Loses ≤ 7 edge pixels, irrelevant for
+        // detection. Keypoint coordinates stay in texture pixel space.
+        let W = (image.width  / 8) * 8
+        let H = (image.height / 8) * 8
+        guard W >= 8, H >= 8 else {
+            dbg("[SuperPoint] detect: image too small (\(image.width)×\(image.height))")
+            return []
+        }
 
         // ── 1. Metal: rgba16Float → sRGB float32 row-major buffer ────────────
         guard let buffer = makeGrayscaleBuffer(from: image.texture,

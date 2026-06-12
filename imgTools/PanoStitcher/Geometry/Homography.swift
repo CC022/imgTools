@@ -14,7 +14,7 @@
 import simd
 import Foundation
 
-struct Homography: Sendable {
+nonisolated struct Homography: Sendable {
 
     /// Column-major 3×3 matrix. Bottom-right element is generally normalised
     /// to 1 by `HomographyEstimator`, but callers should not rely on that.

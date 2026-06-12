@@ -2,114 +2,36 @@
 //  SeamFinder.swift
 //  panoDev
 //
-//  Canvas-pixel ownership ("who provides this pixel"). Two strategies; both
-//  hand the downstream multi-band pyramid blend a binary partition of unity
-//  that its per-level Gaussian α downsample converts into feathered weights.
+//  Content-aware canvas-pixel ownership ("who provides this pixel").
 //
-//  • Content-aware DP labels (preferred) — `computeLabels` builds a global
-//    low-resolution label map on the CPU from the seam-prepass warps:
-//    coverage-restricted Voronoi initialisation, then pairwise Efros–Freeman
-//    minimal-error-boundary-cut refinement of each contested overlap, nearest
-//    camera pairs first. Seams route through regions where the overlapping
-//    images *agree*, so parallax-misaligned foreground objects are no longer
-//    cut through — the visible-seam failure of the pure Voronoi split.
-//    Ownership is resolved globally before any α is touched, which is what
-//    the old (removed) chain-of-pairs α-mutating DP got wrong for 3+ image
-//    overlaps. `applyLabels` is the per-image full-res α-masking dispatch.
+//  `computeLabels` builds a global low-resolution label map on the CPU from
+//  the seam-prepass warps: coverage-restricted Voronoi initialisation, then
+//  pairwise Efros–Freeman minimal-error-boundary-cut refinement of each
+//  contested overlap, nearest camera pairs first. Seams route through
+//  regions where the overlapping images *agree*, so parallax-misaligned
+//  foreground objects are not cut through. Ownership is resolved globally
+//  before any α is touched, which is what the old (removed) chain-of-pairs
+//  α-mutating DP got wrong for 3+ image overlaps.
 //
-//  • Voronoi by camera centre (fallback) — each canvas pixel is owned by the
-//    camera whose optical axis projects nearest to it; content-agnostic.
-//    `makeCoverageState` + `applyVoronoi`, used when the prepass or label
-//    computation fails.
+//  The label map is consumed by the fused `cylindricalWarpMasked` kernel
+//  during the streaming blend: each image's α is zeroed wherever the labels
+//  name another owner, handing the multi-band pyramid blend a binary
+//  partition of unity that its per-level Gaussian α downsample converts
+//  into feathered weights.
+//
+//  CPU on purpose: the label map is decision logic — a sequential DP and
+//  label bookkeeping over ~1 MP of data. All O(full-resolution) per-pixel
+//  work stays on the GPU in the warp/blend kernels.
 //
 
 import Foundation
 import Metal
 import simd
 
-/// Which seam strategy the blend should apply to each warped image.
-enum SeamMasking {
-    case labels(SeamFinder.LabelState)
-    case voronoi(SeamFinder.CoverageState)
-    case none
-}
+nonisolated enum SeamFinder {
 
-enum SeamFinder {
-
-    struct CoverageState {
-        let pso: MTLComputePipelineState
-        let centersBuffer: MTLBuffer
-        let cameraCount: UInt32
-    }
-
-    // MARK: - Prepare
-
-    /// Build reusable Voronoi state. Returns nil if there's nothing to do
-    /// (single-image graph) or the kernel can't load.
-    static func makeCoverageState(graph: PanoGraph,
-                                  canvas: CylindricalCanvas) -> CoverageState? {
-        guard graph.nodes.count >= 2 else { return nil }
-        let ctx = PanoContext.shared
-        guard let pso = ctx.loadPSO("voronoiCoverage") else { return nil }
-
-        // Project each camera's optical axis to canvas (cx, cy).
-        let centers: [SIMD2<Float>] = graph.nodes.map { node in
-            guard let pose = node.pose else { return .zero }
-            let opt = pose.rotation.transpose * SIMD3<Float>(0, 0, 1)
-            let theta = atan2(opt.x, opt.z)
-            let radial = max(sqrt(opt.x * opt.x + opt.z * opt.z), 1e-9)
-            let h = opt.y / radial
-            return SIMD2<Float>(
-                (theta - canvas.origin.x) * canvas.radius,
-                (h     - canvas.origin.y) * canvas.radius
-            )
-        }
-
-        let centerBytes = centers.count * MemoryLayout<SIMD2<Float>>.stride
-        guard let centersBuf = ctx.device.makeBuffer(bytes: centers,
-                                                      length: centerBytes,
-                                                      options: .storageModeShared)
-        else { return nil }
-
-        let summary = centers.enumerated()
-            .map { i, c in String(format: "%d=(%.0f,%.0f)", i, c.x, c.y) }
-            .joined(separator: " ")
-        dbg("[Seam] Voronoi centres: \(summary)")
-
-        return CoverageState(pso: pso,
-                             centersBuffer: centersBuf,
-                             cameraCount: UInt32(centers.count))
-    }
-
-    // MARK: - Apply
-
-    /// Single-buffer dispatch: zero this image's α where another centre is
-    /// closer. No-op when `state` is nil (single-image graph).
-    static func applyVoronoi(state: CoverageState?,
-                             warped: CanvasBuffer,
-                             selfIndex: UInt32) {
-        guard let state else { return }
-        var n = state.cameraCount
-        var s = selfIndex
-        Compute.run { cb in
-            withUnsafeBytes(of: &n) { nRaw in
-                withUnsafeBytes(of: &s) { sRaw in
-                    Compute.encode(cb, state.pso,
-                        buffers: [warped.buffer, state.centersBuffer],
-                        dims:    [warped.dimsPacked],
-                        bytes:   [(nRaw.baseAddress!, nRaw.count),
-                                  (sRaw.baseAddress!, sRaw.count)],
-                        gridW:   warped.width,
-                        gridH:   warped.height)
-                }
-            }
-        }
-    }
-
-    // MARK: - Content-aware DP labels
-
+    /// Low-res ownership map, ready for the masked warp kernel.
     struct LabelState {
-        let pso: MTLComputePipelineState
         /// uint8 per low-res pixel: owning camera index, or 255 = uncovered.
         let labelBuffer: MTLBuffer
         let lowWidth: Int
@@ -118,30 +40,23 @@ enum SeamFinder {
         let scale: Int
     }
 
-    /// Mirrors `SeamLabelParams` in SeamFinding.metal.
-    private struct SeamLabelParams {
-        var selfIndex: UInt32
-        var scale: UInt32
-        var lowW: UInt32
-        var lowH: UInt32
-    }
-
     private static let noOwner: UInt8 = 255
 
-    /// Build the global ownership label map from gain-corrected low-res warps.
-    /// Returns nil on any failure so the caller can fall back to Voronoi.
+    /// Build the global ownership label map from the low-res prepass warps.
+    /// `gains` are applied on the fly when computing seam costs so the seam
+    /// sees final (gain-corrected) colours. Returns nil on any failure.
     static func computeLabels(graph: PanoGraph,
-                              canvas: CylindricalCanvas,
-                              prepass: PanoPipeline.SeamPrepass) -> LabelState? {
+                              prepass: PanoPipeline.SeamPrepass,
+                              gains: [SIMD3<Float>]) -> LabelState? {
         let n = graph.nodes.count
-        guard n >= 2, n < Int(noOwner), prepass.warps.count == n else { return nil }
+        guard n >= 2, n < Int(noOwner),
+              prepass.warps.count == n, gains.count == n else { return nil }
         let low = prepass.lowCanvas
         let lowW = low.size.x, lowH = low.size.y
         guard lowW > 1, lowH > 1 else { return nil }
         let t0 = Date()
 
-        // Camera optical-axis projections in low-res canvas pixels (same
-        // formula as makeCoverageState, in the low canvas's coordinates).
+        // Camera optical-axis projections in low-res canvas pixels.
         let centers: [SIMD2<Float>] = graph.nodes.map { node in
             guard let pose = node.pose else { return .zero }
             let opt = pose.rotation.transpose * SIMD3<Float>(0, 0, 1)
@@ -198,40 +113,18 @@ enum SeamFinder {
 
         // 3 — Per-pair DP seam refinement.
         for (i, j, _) in pairs {
-            refinePairDP(i: i, j: j, centers: centers, px: px,
+            refinePairDP(i: i, j: j, centers: centers, px: px, gains: gains,
                          labels: &labels, lowW: lowW,
                          covI: bbox[i], covJ: bbox[j])
         }
 
-        guard let pso = PanoContext.shared.loadPSO("applySeamLabels"),
-              let buf = PanoContext.shared.device.makeBuffer(
-                  bytes: labels, length: labels.count, options: .storageModeShared)
+        guard let buf = PanoContext.shared.device.makeBuffer(
+            bytes: labels, length: labels.count, options: .storageModeShared)
         else { return nil }
 
         dbg("[Seam] DP labels: \(lowW)×\(lowH), \(pairs.count) pair(s), \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
-        return LabelState(pso: pso, labelBuffer: buf,
+        return LabelState(labelBuffer: buf,
                           lowWidth: lowW, lowHeight: lowH, scale: prepass.scale)
-    }
-
-    /// Single-buffer dispatch: zero this image's α wherever the label map
-    /// names another owner.
-    static func applyLabels(state: LabelState,
-                            warped: CanvasBuffer,
-                            selfIndex: UInt32) {
-        var p = SeamLabelParams(selfIndex: selfIndex,
-                                scale: UInt32(state.scale),
-                                lowW: UInt32(state.lowWidth),
-                                lowH: UInt32(state.lowHeight))
-        Compute.run { cb in
-            withUnsafeBytes(of: &p) { raw in
-                Compute.encode(cb, state.pso,
-                    buffers: [warped.buffer, state.labelBuffer],
-                    dims:    [warped.dimsPacked],
-                    bytes:   [(raw.baseAddress!, raw.count)],
-                    gridW:   warped.width,
-                    gridH:   warped.height)
-            }
-        }
     }
 
     // MARK: - Pairwise DP seam (Efros–Freeman minimal error boundary cut)
@@ -243,6 +136,7 @@ enum SeamFinder {
     private static func refinePairDP(i: Int, j: Int,
                                      centers: [SIMD2<Float>],
                                      px: [UnsafePointer<Float16>],
+                                     gains: [SIMD3<Float>],
                                      labels: inout [UInt8],
                                      lowW: Int,
                                      covI: SIMD4<Int>, covJ: SIMD4<Int>) {
@@ -282,9 +176,11 @@ enum SeamFinder {
         let vertical = abs(centers[i].x - centers[j].x) >= abs(centers[i].y - centers[j].y)
         let (gw, gh) = vertical ? (bw, bh) : (bh, bw)
 
-        // Squared RGB difference where both images cover the pixel; LARGE
-        // elsewhere so the path can traverse gaps of a non-convex overlap
-        // (relabeling stays restricted to C, so this is purely a bridge).
+        // Squared gain-corrected RGB difference where both images cover the
+        // pixel; LARGE elsewhere so the path can traverse gaps of a
+        // non-convex overlap (relabeling stays restricted to C, so this is
+        // purely a bridge).
+        let gi = gains[i], gj = gains[j]
         var cost = [Float](repeating: 0, count: gw * gh)
         for y in 0..<bh {
             for x in 0..<bw {
@@ -293,7 +189,8 @@ enum SeamFinder {
                 if covered(i, idx), covered(j, idx) {
                     d = 0
                     for c in 0..<3 {
-                        let diff = Float(px[i][idx * 4 + c]) - Float(px[j][idx * 4 + c])
+                        let diff = gi[c] * Float(px[i][idx * 4 + c])
+                                 - gj[c] * Float(px[j][idx * 4 + c])
                         d += diff * diff
                     }
                 }

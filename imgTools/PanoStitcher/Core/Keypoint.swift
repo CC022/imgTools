@@ -7,7 +7,7 @@ import Foundation
 import simd
 
 /// A single detected keypoint with optional 256-dim SuperPoint descriptor.
-struct Keypoint: Sendable {
+nonisolated struct Keypoint: Sendable {
     /// Pixel coordinates in the original image (origin = top-left).
     var x: Float
     var y: Float
@@ -22,7 +22,7 @@ struct Keypoint: Sendable {
 }
 
 /// Mirror of the Metal `Keypoint` struct for buffer hand-off.
-struct GPUKeypoint {
+nonisolated struct GPUKeypoint {
     var x: Float
     var y: Float
     var response: Float

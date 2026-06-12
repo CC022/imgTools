@@ -20,7 +20,7 @@ import Foundation
 
 // MARK: - Result
 
-struct RANSACResult: Sendable {
+nonisolated struct RANSACResult: Sendable {
     /// Best-scoring homography (already refit on all inliers).
     let homography: Homography
     /// Indices into the input arrays that survived the inlier test.
@@ -31,7 +31,7 @@ struct RANSACResult: Sendable {
 
 // MARK: - Estimator
 
-enum HomographyEstimator {
+nonisolated enum HomographyEstimator {
 
     /// Estimate a homography mapping `srcPoints[i] → dstPoints[i]` using
     /// confidence-weighted RANSAC and a 4-point DLT minimal solver.

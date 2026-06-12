@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct Match: Sendable {
+nonisolated struct Match: Sendable {
     /// Index into the keypoints-A array.
     let indexA: Int
     /// Index into the keypoints-B array.
