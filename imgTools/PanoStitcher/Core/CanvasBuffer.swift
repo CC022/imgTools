@@ -53,6 +53,38 @@ nonisolated extension PanoContext {
     }
 }
 
+// MARK: - Gaussian mip chain
+
+/// Gaussian mip chain over a CanvasBuffer (`levels[0]` is the base buffer).
+/// Built with the blend pipeline's `pyramidReduce` kernel. Used by the
+/// display path for minification filtering (no nearest-neighbour aliasing
+/// when zoomed out) and by the edit math's low-frequency luma zone
+/// weighting (local highlights/shadows).
+nonisolated struct CanvasMips: @unchecked Sendable {
+    let levels: [CanvasBuffer]
+
+    static func build(for base: CanvasBuffer, maxLevels: Int = 8) -> CanvasMips {
+        let ctx = PanoContext.shared
+        var levels = [base]
+        guard let pso = ctx.loadPSO("pyramidReduce") else { return CanvasMips(levels: levels) }
+        let zero = SIMD2<UInt32>(repeating: 0)
+        while levels.count < maxLevels {
+            let cur = levels[levels.count - 1]
+            let lw = cur.width / 2, lh = cur.height / 2
+            guard lw >= 16, lh >= 16,
+                  let nxt = ctx.makeHalfBuffer(width: lw, height: lh) else { break }
+            Compute.run { cb in
+                Compute.encode(cb, pso,
+                    buffers: [cur.buffer, nxt.buffer],
+                    dims:    [cur.dimsPacked, nxt.dimsPacked, zero, nxt.dimsPacked],
+                    gridW: lw, gridH: lh)
+            }
+            levels.append(nxt)
+        }
+        return CanvasMips(levels: levels)
+    }
+}
+
 // MARK: - Display / export bridges
 
 nonisolated extension CanvasBuffer {

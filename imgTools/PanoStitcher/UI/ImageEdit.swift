@@ -200,15 +200,31 @@ nonisolated enum ImageEditor {
                                             storage: storage)
         else { return nil }
 
+        // Low-frequency luma proxy for the local highlights/shadows zone
+        // weighting — same mip level the display path samples, so preview
+        // and export stay identical. Only built when those sliders are
+        // active; otherwise the kernel's zone sample is unused.
+        var zone = src
+        var invZone: Float = 1
+        if params.highlights != 0 || params.shadows != 0 {
+            let mips = CanvasMips.build(for: src, maxLevels: 5)
+            let k = min(4, mips.levels.count - 1)
+            zone = mips.levels[k]
+            invZone = 1 / Float(1 << k)
+        }
+
         var p = params
         Compute.run { cb in
             withUnsafeBytes(of: &p) { raw in
-                Compute.encode(cb, pso,
-                    buffers: [src.buffer, dst.buffer],
-                    dims:    [src.dimsPacked],
-                    bytes:   [(raw.baseAddress!, MemoryLayout<EditParams>.stride)],
-                    gridW:   src.width,
-                    gridH:   src.height)
+                withUnsafeBytes(of: &invZone) { izRaw in
+                    Compute.encode(cb, pso,
+                        buffers: [src.buffer, dst.buffer, zone.buffer],
+                        dims:    [src.dimsPacked, zone.dimsPacked],
+                        bytes:   [(raw.baseAddress!, MemoryLayout<EditParams>.stride),
+                                  (izRaw.baseAddress!, izRaw.count)],
+                        gridW:   src.width,
+                        gridH:   src.height)
+                }
             }
         }
         return dst

@@ -72,6 +72,9 @@ struct MetalZoomImageView: NSViewRepresentable {
 
 final class HDRMetalImageView: MTKView {
     private var canvasBuffer: CanvasBuffer?
+    /// Gaussian mip chain over `canvasBuffer` — built asynchronously after
+    /// the buffer is set; the view renders bilinear-on-base until it lands.
+    private var mips: CanvasMips?
     private var pipeline: MTLRenderPipelineState?
 
     private var zoomScale: CGFloat = 1
@@ -116,6 +119,19 @@ final class HDRMetalImageView: MTKView {
     func setBuffer(_ buffer: CanvasBuffer) {
         guard canvasBuffer?.buffer !== buffer.buffer else { return }
         canvasBuffer = buffer
+        mips = nil
+        // Build the mip chain off-main; until it lands the fragment samples
+        // the base buffer bilinearly (correct, just unfiltered when zoomed
+        // far out).
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let built = CanvasMips.build(for: buffer)
+            await MainActor.run { [weak self] in
+                guard let view = self,
+                      view.canvasBuffer?.buffer === buffer.buffer else { return }
+                view.mips = built
+                view.needsDisplay = true
+            }
+        }
         reset(redraw: false)
         needsDisplay = true
         publishTransform()
@@ -292,24 +308,52 @@ extension HDRMetalImageView: MTKViewDelegate {
             cropSizePx   = CGSize(width: bufW, height: bufH)
         }
 
+        // Mip selection — zoom is uniform across the frame, so the
+        // minification bracket is picked here once: bilinear within the two
+        // levels around the screen-px-per-canvas-px factor, lerped by the
+        // fractional LOD in the shader (trilinear).
+        let levels = mips?.levels ?? [canvasBuffer]
+        let fitPx = min(drawableSize.width  / max(cropSizePx.width, 1),
+                        drawableSize.height / max(cropSizePx.height, 1))
+        let pxPerBase = Double(fitPx * zoomScale)
+        var kA = 0
+        var blend: Float = 0
+        if pxPerBase < 1, pxPerBase > 0 {
+            let lod = -log2(pxPerBase)
+            kA = min(Int(lod), levels.count - 1)
+            blend = kA < levels.count - 1 ? Float(lod - Double(kA)) : 0
+        }
+        let kB = min(kA + 1, levels.count - 1)
+        let kZ = min(4, levels.count - 1)
+        let mipA = levels[kA], mipB = levels[kB], zone = levels[kZ]
+
         var uniforms = MetalImageUniforms(
             viewSize: SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height)),
             imageSize: SIMD2<Float>(Float(canvasBuffer.width), Float(canvasBuffer.height)),
             offset: SIMD2<Float>(Float(offsetPixels.width), Float(offsetPixels.height)),
             scale: Float(zoomScale),
             cropOrigin: SIMD2<Float>(Float(cropOriginPx.x), Float(cropOriginPx.y)),
-            cropSize:   SIMD2<Float>(Float(cropSizePx.width), Float(cropSizePx.height))
+            cropSize:   SIMD2<Float>(Float(cropSizePx.width), Float(cropSizePx.height)),
+            levelADims: SIMD2<Float>(Float(mipA.width), Float(mipA.height)),
+            levelBDims: SIMD2<Float>(Float(mipB.width), Float(mipB.height)),
+            zoneDims:   SIMD2<Float>(Float(zone.width), Float(zone.height)),
+            invA: 1 / Float(1 << kA),
+            invB: 1 / Float(1 << kB),
+            invZone: 1 / Float(1 << kZ),
+            levelBlend: blend
         )
 
         var edits = editParams
         enc.setRenderPipelineState(pipeline)
-        enc.setFragmentBuffer(canvasBuffer.buffer, offset: 0, index: 0)
+        enc.setFragmentBuffer(mipA.buffer, offset: 0, index: 0)
+        enc.setFragmentBuffer(mipB.buffer, offset: 0, index: 1)
+        enc.setFragmentBuffer(zone.buffer, offset: 0, index: 2)
         enc.setFragmentBytes(&uniforms,
                              length: MemoryLayout<MetalImageUniforms>.stride,
-                             index: 1)
+                             index: 3)
         enc.setFragmentBytes(&edits,
                              length: MemoryLayout<EditParams>.stride,
-                             index: 2)
+                             index: 4)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         enc.endEncoding()
         cb.present(drawable)
@@ -324,6 +368,13 @@ private struct MetalImageUniforms {
     var scale: Float
     var cropOrigin: SIMD2<Float>
     var cropSize: SIMD2<Float>
+    var levelADims: SIMD2<Float>
+    var levelBDims: SIMD2<Float>
+    var zoneDims: SIMD2<Float>
+    var invA: Float
+    var invB: Float
+    var invZone: Float
+    var levelBlend: Float
 }
 
 private extension CGFloat {
