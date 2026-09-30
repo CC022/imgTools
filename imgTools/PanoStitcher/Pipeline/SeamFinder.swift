@@ -38,6 +38,18 @@ nonisolated enum SeamFinder {
         let lowHeight: Int
         /// Full-res canvas pixels per label-map pixel.
         let scale: Int
+
+        /// 1×1 map naming no owner anywhere: the masked warp keeps plain
+        /// coverage α. Used when there are no seams to find (single image,
+        /// or prepass failure) so the blend still runs the masked warp,
+        /// which is where rgb enters the blend domain.
+        static func unowned() -> LabelState? {
+            var none = noOwner
+            guard let buf = PanoContext.shared.device.makeBuffer(
+                bytes: &none, length: 1, options: .storageModeShared)
+            else { return nil }
+            return LabelState(labelBuffer: buf, lowWidth: 1, lowHeight: 1, scale: 1)
+        }
     }
 
     private static let noOwner: UInt8 = 255

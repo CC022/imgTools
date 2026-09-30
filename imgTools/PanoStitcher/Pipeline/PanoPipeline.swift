@@ -336,8 +336,10 @@ nonisolated enum PanoPipeline {
     /// `θ = origin + x/radius` mapping needs no other change. Intrinsics are
     /// rescaled to the loaded texture the same way the detection pass does.
     ///
-    /// With `mask` non-nil, `pso` must be `cylindricalWarpMasked` and the
-    /// exposure gain + seam-label α masking are fused into the warp dispatch.
+    /// With `mask` non-nil, `pso` must be `cylindricalWarpMasked`: exposure
+    /// gain, seam-label α masking and the blend-domain encode are fused into
+    /// the warp dispatch, so the output rgb is blend-domain, not linear.
+    /// Without `mask` the output is linear light (low-res prepass).
     ///
     /// With `roi` non-nil, only that canvas sub-rect is warped and the
     /// returned buffer has the ROI's dimensions (origin recorded in the
@@ -448,8 +450,8 @@ nonisolated enum PanoPipeline {
     /// analysis of the low-res prepass. Scoped so the n prepass warps are
     /// released on return — only the 1 B/px label buffer survives into the
     /// blend. Identity gains + nil labels for a single image (or on the
-    /// never-in-practice prepass failure), which the blend handles by
-    /// warping unmasked.
+    /// never-in-practice prepass failure), which the blend handles with an
+    /// ownerless label map (plain coverage α).
     private static func prepareExposureAndSeams(graph: PanoGraph,
                                                 canvas: CylindricalCanvas)
                                                 -> ([SIMD3<Float>], SeamFinder.LabelState?) {
@@ -604,8 +606,10 @@ nonisolated enum PanoPipeline {
         dbg("[Blend] streaming Laplacian pyramid: \(nLevels) levels, canvas \(W)×\(H)")
 
         let floatFactory: (Int, Int) -> CanvasBuffer? = { ctx.makeFloatBuffer(width: $0, height: $1) }
-        guard let warpPSO = ctx.loadPSO(seamLabels == nil ? "cylindricalWarp"
-                                                          : "cylindricalWarpMasked"),
+        // Always the masked warp: it is where rgb enters the blend domain
+        // that `pyramidFinalise` decodes (BlendDomain.h).
+        guard let labels  = seamLabels ?? SeamFinder.LabelState.unowned(),
+              let warpPSO = ctx.loadPSO("cylindricalWarpMasked"),
               let k       = loadBlendKernels(ctx: ctx),
               let acc     = makePyramid(W, H, nLevels: nLevels, factory: floatFactory)
         else { return nil }
@@ -619,12 +623,10 @@ nonisolated enum PanoPipeline {
 
         let total = graph.nodes.count
         for (i, node) in graph.nodes.enumerated() {
-            let mask: WarpMask? = seamLabels.map { labels in
-                (labels: labels,
-                 gain: i < exposureGains.count ? exposureGains[i]
-                                               : SIMD3<Float>(repeating: 1),
-                 selfIndex: UInt32(i))
-            }
+            let mask: WarpMask = (labels: labels,
+                                  gain: i < exposureGains.count ? exposureGains[i]
+                                                                : SIMD3<Float>(repeating: 1),
+                                  selfIndex: UInt32(i))
             let roi = makeBlendROI(node: node, canvas: canvas, nLevels: nLevels)
             if let roi {
                 dbg("[Blend] node \(node.id): ROI \(roi.size.x)×\(roi.size.y) @(\(roi.origin.x),\(roi.origin.y)) of \(W)×\(H)")

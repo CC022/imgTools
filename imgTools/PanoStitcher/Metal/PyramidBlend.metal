@@ -18,7 +18,15 @@
 //    • pyramidNormalize          — acc.rgb / acc.α at coarsest level
 //    • pyramidCollapseAddExpanded — fuse: Expand(coarseResult) + acc[k]
 //                                   detail → fineOut
-//    • pyramidFinalise           — float32 → half16 final output
+//    • pyramidFinalise           — blend domain → linear light, float32 →
+//                                  half16 final output
+//
+//  Every level holds rgb in the blend domain (BlendDomain.h: asinh, i.e.
+//  log above the noise floor), not linear light: the warp encodes and
+//  `pyramidFinalise` decodes. The kernels in between are linear and
+//  domain-agnostic, so the bands' low-frequency correction between frames
+//  is a smooth multiplicative gain field rather than an additive offset
+//  (which in linear light lifts / crushes shadows).
 //
 //  ROI support: each image's fine pyramid levels cover only that image's
 //  canvas footprint (origin-aligned sub-rect), so per-image blend work is
@@ -31,6 +39,7 @@
 //
 
 #include <metal_stdlib>
+#include "BlendDomain.h"
 using namespace metal;
 
 // Burt-Adelson 5-tap generating kernel: [1, 4, 6, 4, 1] / 16
@@ -248,6 +257,7 @@ kernel void pyramidFinalise(
     if (gid.x >= dim.width || gid.y >= dim.height) return;
     uint i = idx2(gid.x, gid.y, dim.width);
     float4 c = inBuf[i];
-    half4 out = (c.a > 0.5f) ? half4(half3(c.rgb), 1.0h) : half4(0.0h);
+    half4 out = (c.a > 0.5f) ? half4(half3(decodeBlendDomain(c.rgb)), 1.0h)
+                             : half4(0.0h);
     outBuf[i] = out;
 }

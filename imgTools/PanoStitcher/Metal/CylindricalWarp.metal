@@ -6,11 +6,12 @@
 //  (rgba16f, row-major). Buffer-backed so the canvas is not constrained by
 //  the 16384-px Metal 2D texture limit. Two entry points:
 //
-//    • cylindricalWarp       — plain warp (low-res prepass, single image).
-//    • cylindricalWarpMasked — warp fused with per-image exposure gain and
-//      seam-label α masking, used by the streaming blend. One pass instead
-//      of warp + gain + mask, saving two full-canvas read-modify-writes
-//      per image.
+//    • cylindricalWarp       — plain linear-light warp (low-res prepass).
+//    • cylindricalWarpMasked — warp fused with per-image exposure gain,
+//      seam-label α masking and the blend-domain encode (BlendDomain.h),
+//      used by the streaming blend. One pass instead of warp + gain + mask
+//      + encode, saving full-canvas read-modify-writes per image. Its rgb
+//      output is NOT linear light — `pyramidFinalise` decodes it.
 //
 //  Critical detail for clean multi-band blending:
 //    • RGB is sampled with `clamp_to_edge` *every* canvas pixel, including
@@ -26,6 +27,7 @@
 //
 
 #include <metal_stdlib>
+#include "BlendDomain.h"
 using namespace metal;
 
 // Layout MUST match CylindricalWarpParams in CylindricalCanvas.swift.
@@ -100,8 +102,9 @@ kernel void cylindricalWarpMasked(
 
     half4 c = warpPixel(inTex, P, gid);
     // Gain applies to every pixel (including extrapolated edge colour, which
-    // leaks into the Laplacian bands and must match the covered interior).
-    c.rgb = half3(float3(c.rgb) * M.gain);
+    // leaks into the Laplacian bands and must match the covered interior),
+    // in linear light, before the encode into the blend domain.
+    c.rgb = half3(encodeBlendDomain(float3(c.rgb) * M.gain));
 
     // Zero α where the seam label map names another owner. Nearest-neighbour
     // lookup is sufficient: the pyramid blend feathers the binary mask at
